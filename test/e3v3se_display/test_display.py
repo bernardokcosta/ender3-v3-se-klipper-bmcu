@@ -18,6 +18,7 @@ from extras.e3v3se_display.tjc3224 import (FRAME_TAIL, TJC3224,
 from extras.e3v3se_display.transport import split_chunks
 from extras.e3v3se_display.ui import DisplayUI
 from extras.e3v3se_display.translations import translate
+from extras.e3v3se_display import translations
 from configfile import ConfigAutoSave, ConfigFileReader, ConfigWrapper
 from extras.gcode_macro import GCodeMacro, PrinterGCodeMacro
 from extras.gcode_move import GCodeMove
@@ -854,6 +855,23 @@ class DisplayLanguageTest(unittest.TestCase):
         ui.handle_key("click")
         self.assertFalse(h.display.is_operation_busy())
         self.assertIn("BMCU unavailable", self.text_frames(transport))
+
+    def test_legacy_escaped_placeholders_and_unicode_translation(self):
+        original_escape = translations.re.escape
+        def legacy_escape(value):
+            return original_escape(value).replace("%", "\\%")
+        with mock.patch.object(translations.re, "escape", legacy_escape):
+            patterns = translations._build_patterns()
+        with mock.patch.object(translations, "_PATTERNS", patterns):
+            self.assertEqual("Canal 4", translate(b"Channel 4", "pt_BR"))
+            self.assertEqual("Referencie X antes de mover",
+                             translate("Home X before moving it", "pt_BR"))
+            accented = "Impress\u00e3o iniciada; opera\u00e7\u00e3o abortada"
+            self.assertEqual(accented, translate(
+                "Print started; operation aborted", "pt_BR"))
+            self.assertEqual(accented, translate(accented, "pt_BR"))
+            self.assertEqual(accented, translate(
+                accented.encode("utf-8"), "pt_BR"))
 
 
 class ConfigLayoutTest(unittest.TestCase):

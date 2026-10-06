@@ -26,7 +26,7 @@ auto-Z implementation; probing uses Klipper's upstream CR-Touch support.
   G-code state restoration, and pause/resume/cancel integration.
 - Stock display menus in **English (default)** and **Brazilian Portuguese**,
   with current/target temperature, printer state and confirmed active channel.
-- 49 automated display and filament regression tests, including real Klipper
+- 50 automated display and filament regression tests, including real Klipper
   macro parsing and G-code state handling.
 
 This is a pre-release requiring physical commissioning. Filament load/unload

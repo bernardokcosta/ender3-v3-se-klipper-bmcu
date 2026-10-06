@@ -517,7 +517,8 @@ class E3V3SEDisplay:
             values = (self.preheat_petg_temps if material == "PETG"
                       else self.preheat_pla_temps)
             target = values[0]
-        if not math.isfinite(target) or not minimum <= target <= maximum:
+        if (math.isnan(target) or math.isinf(target)
+                or not minimum <= target <= maximum):
             raise self.printer.command_error(
                 "Filament temperature outside the safe range")
         return target

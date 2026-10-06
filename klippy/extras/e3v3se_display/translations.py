@@ -1,10 +1,15 @@
+# -*- coding: utf-8 -*-
 # Display translations for the Ender 3 V3 SE stock display
 #
 # Copyright (C) 2026 Bernardo Costa
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
+from __future__ import unicode_literals
+
 import re
+
+from .tjc3224 import _as_text
 
 
 PORTUGUESE = {
@@ -196,16 +201,23 @@ PORTUGUESE = {
 }
 
 
-_PATTERNS = []
-for source, target in PORTUGUESE.items():
-    if "%" in source:
-        pattern = re.escape(source)
-        pattern = pattern.replace("%s", "(.+?)").replace("%d", "(-?[0-9]+)")
-        _PATTERNS.append((re.compile("^" + pattern + "$"), target))
+def _build_patterns():
+    patterns = []
+    for source, target in PORTUGUESE.items():
+        if "%" in source:
+            pattern = re.escape(source)
+            # Python 2 escapes '%' too; match the escaped placeholder token.
+            pattern = pattern.replace(re.escape("%s"), "(.+?)")
+            pattern = pattern.replace(re.escape("%d"), "(-?[0-9]+)")
+            patterns.append((re.compile("^" + pattern + "$"), target))
+    return patterns
+
+
+_PATTERNS = _build_patterns()
 
 
 def translate(value, language):
-    text = str(value)
+    text = _as_text(value)
     if language != "pt_BR":
         return text
     if text in PORTUGUESE:
