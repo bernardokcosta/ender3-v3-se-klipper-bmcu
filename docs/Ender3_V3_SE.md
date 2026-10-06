@@ -26,7 +26,7 @@ uses the stock CR-Touch through Klipper's upstream `bltouch` implementation.
 ## Host installation
 
 Download the source and firmware files from the same
-[GitHub release](https://github.com/bernardokcosta/ender3-v3-se-klipper/releases/latest).
+[GitHub release](https://github.com/bernardokcosta/ender3-v3-se-klipper-bmcu/releases).
 The release tag is the authoritative source version for its `klipper.bin` and
 `klipper.dict`; do not run a host checkout from another commit with that binary.
 
@@ -169,3 +169,8 @@ The following tests require the printer and are not performed by CI:
 
 Software stress tests cover frame state, byte limits, UTF-8 boundaries, signed
 values, and file navigation. They do not replace physical validation.
+
+## BMCU and display languages
+
+See [BMCU 1.0.6 integration](Ender3_V3_SE_BMCU.md) for UART1, the PC9 switch,
+filament sequences, language selection and physical display acceptance tests.

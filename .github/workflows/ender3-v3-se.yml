@@ -2,6 +2,9 @@ name: Ender 3 V3 SE
 
 on: [push, pull_request, workflow_dispatch]
 
+permissions:
+  contents: read
+
 jobs:
   display-and-firmware:
     runs-on: ubuntu-22.04
@@ -19,7 +22,7 @@ jobs:
         ci_build/venv/bin/pip install -r scripts/klippy-requirements.txt
 
     - name: Test display module
-      run: python3 -m unittest discover -s test/e3v3se_display -p 'test_*.py'
+      run: ci_build/venv/bin/python -m unittest discover -s test/e3v3se_display -p 'test_*.py'
 
     - name: Build GD32F303 target
       run: |
@@ -68,3 +71,35 @@ jobs:
       with:
         name: ender3-v3-se-gd32f303-${{ github.sha }}
         path: ci_build/ender3-v3-se-artifact
+
+  publish-prerelease:
+    if: github.ref == 'refs/tags/v0.2.0'
+    needs: display-and-firmware
+    runs-on: ubuntu-22.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Download validated firmware
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+          --name "ender3-v3-se-gd32f303-${GITHUB_SHA}" --dir release-artifacts
+        cd release-artifacts
+        sha256sum --check SHA256SUMS
+        grep -Fx "commit=${GITHUB_SHA}" BUILD-METADATA.txt
+
+    - name: Publish 0.2.0 pre-release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create v0.2.0 --repo "$GITHUB_REPOSITORY" \
+          --verify-tag --prerelease --latest=false \
+          --title "v0.2.0 - BMCU integration and multilingual stock display" \
+          --notes-file docs/releases/v0.2.0.md \
+          release-artifacts/klipper.bin release-artifacts/klipper.dict \
+          release-artifacts/defconfig release-artifacts/BUILD-METADATA.txt \
+          release-artifacts/SHA256SUMS

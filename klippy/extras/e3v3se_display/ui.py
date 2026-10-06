@@ -8,6 +8,7 @@ import textwrap
 
 from .model import FileBrowser
 from .tjc3224 import safe_text_bytes, utf8_scroll
+from .translations import translate
 
 
 class MenuItem:
@@ -18,6 +19,10 @@ class MenuItem:
 
 
 class DisplayUI:
+    PRINT_STATES = {
+        "standby": "Ready", "printing": "Printing", "paused": "Paused",
+        "complete": "Complete", "cancelled": "Cancelled", "error": "Error",
+    }
     BACKGROUND = 0x0841
     PANEL = 0x10a2
     PANEL_ALT = 0x18e3
@@ -37,6 +42,7 @@ class DisplayUI:
     def __init__(self, lcd, owner):
         self.lcd = lcd
         self.owner = owner
+        self.language = owner.language
         self.mode = "dashboard"
         self.status = {}
         self.items = []
@@ -59,10 +65,13 @@ class DisplayUI:
     def _fill(self, color, x0, y0, x1, y1):
         self.lcd.rectangle(color, x0, y0, x1, y1, filled=True)
 
+    def _text(self, x, y, value, *args):
+        self.lcd.text(x, y, translate(value, self.language), *args)
+
     def _header(self, title, color=None):
         color = self.ACCENT if color is None else color
         self._fill(self.PANEL, 0, 0, 239, self.HEADER_HEIGHT)
-        self.lcd.text(8, 9, title, color, self.PANEL,
+        self._text(8, 9, title, color, self.PANEL,
                       self.lcd.FONT_8X16, True, 27)
         self.lcd.line(color, 0, self.HEADER_HEIGHT, 239, self.HEADER_HEIGHT)
 
@@ -71,7 +80,8 @@ class DisplayUI:
                 int(self.status.get("hotend_target", 0)),
                 int(self.status.get("bed_temp", 0)),
                 int(self.status.get("bed_target", 0)),
-                self.status.get("display_message") or "")
+                self.status.get("display_message") or
+                self.status.get("bmcu_label", "BMCU unavailable"))
 
     def _draw_footer(self, force=False):
         signature = self._footer_signature()
@@ -81,13 +91,13 @@ class DisplayUI:
         self._fill(self.PANEL, 0, self.FOOTER_TOP, 239, 319)
         hotend = "N %d/%dC" % (signature[0], signature[1])
         bed = "B %d/%dC" % (signature[2], signature[3])
-        self.lcd.text(6, 284, hotend, self.FOREGROUND, self.PANEL,
+        self._text(6, 284, hotend, self.FOREGROUND, self.PANEL,
                       self.lcd.FONT_8X16, True, 13)
-        self.lcd.text(128, 284, bed, self.FOREGROUND, self.PANEL,
+        self._text(128, 284, bed, self.FOREGROUND, self.PANEL,
                       self.lcd.FONT_8X16, True, 12)
         message = signature[4]
         if message:
-            self.lcd.text(6, 302, message, self.ACCENT, self.PANEL,
+            self._text(6, 302, message, self.ACCENT, self.PANEL,
                           self.lcd.FONT_8X16, True, 28)
 
     def show_dashboard(self):
@@ -120,43 +130,47 @@ class DisplayUI:
         self._last_signature = signature
         self.lcd.clear(self.BACKGROUND)
         self._header("ENDER 3 V3 SE")
-        print_state = signature[0].upper()
+        print_state = ("Paused" if signature[1] else
+                       self.PRINT_STATES.get(signature[0], signature[0]))
         state_color = self.ACCENT
-        if print_state in ("ERROR", "CANCELLED"):
+        if signature[0] in ("error", "cancelled"):
             state_color = self.ERROR
-        elif print_state == "PAUSED" or signature[1]:
+        elif signature[0] == "paused" or signature[1]:
             state_color = self.WARNING
-        elif print_state == "COMPLETE":
+        elif signature[0] == "complete":
             state_color = self.SUCCESS
-        self.lcd.text(8, 48, "STATE", self.MUTED, self.BACKGROUND,
+        self._text(8, 48, "STATE", self.MUTED, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 8)
-        self.lcd.text(72, 48, print_state, state_color, self.BACKGROUND,
+        self._text(72, 48, print_state, state_color, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 18)
-        self.lcd.text(8, 78, "NOZZLE %d / %d C" % (signature[2], signature[3]),
+        self._text(8, 78, "NOZZLE %d / %d C" % (signature[2], signature[3]),
                       self.FOREGROUND, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 27)
-        self.lcd.text(8, 101, "BED    %d / %d C" % (signature[4], signature[5]),
+        self._text(8, 101, "BED    %d / %d C" % (signature[4], signature[5]),
                       self.FOREGROUND, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 27)
-        self.lcd.text(8, 132, "X %7.2f  Y %7.2f" % (signature[6], signature[7]),
+        self._text(8, 132, "X %7.2f  Y %7.2f" % (signature[6], signature[7]),
                       self.FOREGROUND, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 29)
-        self.lcd.text(8, 154, "Z %7.2f" % (signature[8],),
+        self._text(8, 154, "Z %7.2f" % (signature[8],),
                       self.FOREGROUND, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 18)
+        self._text(120, 154, self.status.get("bmcu_label", "BMCU absent"),
+                      self.ACCENT, self.BACKGROUND,
+                      self.lcd.FONT_8X16, True, 14)
         progress = max(0, min(100, signature[9]))
         self._fill(self.PANEL_ALT, 8, 184, 231, 207)
         if progress:
             self._fill(self.ACCENT, 8, 184, 8 + int(223 * progress / 100.), 207)
-        self.lcd.text(96, 188, "%3d%%" % progress,
+        self._text(96, 188, "%3d%%" % progress,
                       self.FOREGROUND, self.PANEL_ALT,
                       self.lcd.FONT_8X16, False, 5)
         filename = signature[10] or "Ready"
         filename = utf8_scroll(filename, 28, signature[12])
-        self.lcd.text(8, 221, filename, self.FOREGROUND, self.BACKGROUND,
+        self._text(8, 221, filename, self.FOREGROUND, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 28)
         message = signature[11] or "Click for menu"
-        self.lcd.text(8, 248, message, self.MUTED, self.BACKGROUND,
+        self._text(8, 248, message, self.MUTED, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 28)
         self._draw_footer(force=True)
 
@@ -178,6 +192,8 @@ class DisplayUI:
                     "Pause print", lambda: self._run_and_report(
                         self.owner.pause_print, "Print paused")))
             items.append(MenuItem("Tune", self.show_tune_menu))
+            if paused:
+                items.append(MenuItem("Filament", self.show_prepare_menu))
             items.append(MenuItem("Cancel print", self.confirm_cancel))
         else:
             items.append(MenuItem("Print", self.show_files))
@@ -191,6 +207,8 @@ class DisplayUI:
         self.show_menu("MAIN MENU", items, self.show_dashboard)
 
     def show_menu(self, title, items, back_callback=None):
+        for item in items:
+            item.label = translate(item.label, self.language)
         self.mode = "menu"
         self.title = title
         self.items = items
@@ -221,7 +239,7 @@ class DisplayUI:
             label = item.label
             if selected:
                 label = utf8_scroll(label, 27, self.tick // 2)
-            self.lcd.text(12, y0 + 11, label, color, background,
+            self._text(12, y0 + 11, label, color, background,
                           self.lcd.FONT_8X16, True, 27)
         self._draw_footer(force=True)
 
@@ -230,6 +248,8 @@ class DisplayUI:
         if not ok:
             self.show_message("COMMAND FAILED", message, self.show_main_menu,
                               self.ERROR)
+        elif self.owner.is_operation_busy():
+            self.show_operation()
         elif success_message:
             self.show_message("COMMAND STARTED", success_message,
                               self.show_main_menu, self.SUCCESS)
@@ -245,15 +265,35 @@ class DisplayUI:
                 self.owner.preheat_petg, "PETG preheat selected")),
             MenuItem("Cooldown", lambda: self._run_and_report(
                 self.owner.cooldown, "Heaters and fan disabled")),
-            MenuItem("Load filament", lambda: self._run_and_report(
-                self.owner.load_filament, "Load macro started")),
+            MenuItem("Load filament", self.request_load),
             MenuItem("Unload filament", lambda: self._run_and_report(
                 self.owner.unload_filament, "Unload macro started")),
+            MenuItem("BMCU channels", self.show_bmcu_menu),
             MenuItem("Disable motors", lambda: self._run_and_report(
                 self.owner.disable_motors, "Motors disabled")),
             self._back_item(self.show_main_menu),
         ]
         self.show_menu("PREPARE", items, self.show_main_menu)
+
+    def request_load(self):
+        if self.owner.bmcu_available():
+            self.show_bmcu_menu()
+        else:
+            self._run_and_report(self.owner.load_filament, "Load macro started")
+
+    def show_bmcu_menu(self):
+        available = self.owner.bmcu_available()
+        items = [MenuItem("Channel %d: load" % (channel + 1),
+                          lambda c=channel: self._run_and_report(
+                              lambda: self.owner.bmcu_load(c)), available)
+                 for channel in range(4)]
+        items.append(MenuItem("Unload active channel", lambda:
+                              self._run_and_report(self.owner.bmcu_unload),
+                              available))
+        if not available:
+            items.append(MenuItem("BMCU unavailable", None, False))
+        items.append(self._back_item(self.show_prepare_menu))
+        self.show_menu("BMCU CHANNELS", items, self.show_prepare_menu)
 
     def _axis_adjust(self, axis, step):
         status = self.status
@@ -422,7 +462,7 @@ class DisplayUI:
         items = [MenuItem("Confirm", confirm_callback),
                  MenuItem("Cancel", back_callback)]
         self.show_menu(title, items, back_callback)
-        self.lcd.text(8, 244, detail, self.WARNING, self.BACKGROUND,
+        self._text(8, 244, detail, self.WARNING, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 28)
 
     def show_adjustment(self, title, value, step, minimum, maximum, callback,
@@ -444,11 +484,11 @@ class DisplayUI:
         self._header(self.title)
         fmt = "%%.%df%%s" % adjustment["decimals"]
         value = fmt % (adjustment["value"], adjustment["unit"])
-        self.lcd.text(48, 104, value, self.ACCENT, self.BACKGROUND,
+        self._text(48, 104, value, self.ACCENT, self.BACKGROUND,
                       self.lcd.FONT_16X32, True, 18)
-        self.lcd.text(22, 172, "Rotate to adjust", self.FOREGROUND,
+        self._text(22, 172, "Rotate to adjust", self.FOREGROUND,
                       self.BACKGROUND, self.lcd.FONT_8X16, True, 24)
-        self.lcd.text(22, 198, "Click to return", self.MUTED,
+        self._text(22, 198, "Click to return", self.MUTED,
                       self.BACKGROUND, self.lcd.FONT_8X16, True, 24)
         self._draw_footer(force=True)
 
@@ -472,7 +512,20 @@ class DisplayUI:
                               self.back_callback, self.ERROR)
             return
         adjustment["value"] = value
-        self._draw_adjustment()
+        if not self.owner.is_operation_busy():
+            self._draw_adjustment()
+
+    def show_operation(self):
+        self.mode = "operation"
+        self.lcd.clear(self.BACKGROUND)
+        self._header("FILAMENT", self.WARNING)
+        self._text(8, 65, self.owner.operation_message, self.FOREGROUND,
+                      self.BACKGROUND, self.lcd.FONT_8X16, True, 28)
+        self._text(8, 115, "Click to cancel", self.WARNING,
+                      self.BACKGROUND, self.lcd.FONT_8X16, True, 28)
+        self._text(8, 152, "Wait for motion to stop", self.MUTED,
+                      self.BACKGROUND, self.lcd.FONT_8X16, True, 28)
+        self._draw_footer(force=True)
 
     def show_message(self, title, message, back_callback=None, color=None):
         self.mode = "message"
@@ -482,11 +535,11 @@ class DisplayUI:
         self.adjustment = None
         self.lcd.clear(self.BACKGROUND)
         self._header(title, color or self.ACCENT)
-        lines = textwrap.wrap(str(message), 27) or [""]
+        lines = textwrap.wrap(translate(message, self.language), 27) or [""]
         for index, line in enumerate(lines[:8]):
-            self.lcd.text(8, 54 + index * 25, line, self.FOREGROUND,
+            self._text(8, 54 + index * 25, line, self.FOREGROUND,
                           self.BACKGROUND, self.lcd.FONT_8X16, True, 28)
-        self.lcd.text(8, 252, "Click to return", self.MUTED, self.BACKGROUND,
+        self._text(8, 252, "Click to return", self.MUTED, self.BACKGROUND,
                       self.lcd.FONT_8X16, True, 24)
         self._draw_footer(force=True)
 
@@ -502,13 +555,13 @@ class DisplayUI:
             return
         self._fill(self.BACKGROUND, 0, 45, 239, 276)
         value = "Z %.3f mm" % (z_position if z_position is not None else 0.)
-        self.lcd.text(54, 72, value, self.ACCENT, self.BACKGROUND,
+        self._text(54, 72, value, self.ACCENT, self.BACKGROUND,
                       self.lcd.FONT_12X24, True, 16)
-        self.lcd.text(12, 126, "Turn: move 0.05 mm", self.FOREGROUND,
+        self._text(12, 126, "Turn: move 0.05 mm", self.FOREGROUND,
                       self.BACKGROUND, self.lcd.FONT_8X16, True, 27)
-        self.lcd.text(12, 156, "Click: ACCEPT", self.SUCCESS,
+        self._text(12, 156, "Click: ACCEPT", self.SUCCESS,
                       self.BACKGROUND, self.lcd.FONT_8X16, True, 27)
-        self.lcd.text(12, 186, "Hold: ABORT", self.ERROR,
+        self._text(12, 186, "Hold: ABORT", self.ERROR,
                       self.BACKGROUND, self.lcd.FONT_8X16, True, 27)
         self._draw_footer(force=force)
 
@@ -516,7 +569,8 @@ class DisplayUI:
         self.status = status
         self.tick += 1
         print_state = status.get("print_state", "standby")
-        if (print_state in ("printing", "paused")
+        if (self.mode != "operation"
+                and print_state in ("printing", "paused")
                 and self._last_print_state not in ("printing", "paused")):
             self.show_dashboard()
         self._last_print_state = print_state
@@ -530,10 +584,14 @@ class DisplayUI:
                 self._draw_menu()
             else:
                 self._draw_footer()
-        elif self.mode in ("adjustment", "message"):
+        elif self.mode in ("adjustment", "message", "operation"):
             self._draw_footer()
 
     def handle_key(self, key):
+        if self.mode == "operation":
+            if key in ("click", "long_click"):
+                self.owner.cancel_operation()
+            return
         if self.mode == "dashboard":
             if key in ("click", "long_click"):
                 self.show_main_menu()

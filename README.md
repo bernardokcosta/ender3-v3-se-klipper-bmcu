@@ -1,7 +1,7 @@
-# Klipper for Ender 3 V3 SE
+# Klipper for Ender 3 V3 SE with BMCU
 
-[![Ender 3 V3 SE CI](https://github.com/bernardokcosta/ender3-v3-se-klipper/actions/workflows/ender3-v3-se.yml/badge.svg)](https://github.com/bernardokcosta/ender3-v3-se-klipper/actions/workflows/ender3-v3-se.yml)
-[![Latest release](https://img.shields.io/github/v/release/bernardokcosta/ender3-v3-se-klipper?include_prereleases)](https://github.com/bernardokcosta/ender3-v3-se-klipper/releases/latest)
+[![Ender 3 V3 SE CI](https://github.com/bernardokcosta/ender3-v3-se-klipper-bmcu/actions/workflows/ender3-v3-se.yml/badge.svg)](https://github.com/bernardokcosta/ender3-v3-se-klipper-bmcu/actions/workflows/ender3-v3-se.yml)
+[![Latest release](https://img.shields.io/github/v/release/bernardokcosta/ender3-v3-se-klipper-bmcu?include_prereleases)](https://github.com/bernardokcosta/ender3-v3-se-klipper-bmcu/releases)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](COPYING)
 
 This is an unofficial [Klipper](https://www.klipper3d.org/) fork for a
@@ -16,6 +16,23 @@ The implementation is based on current upstream Klipper and keeps the machine
 support isolated in a small MCU bridge, a Klippy extra, modular configuration,
 tests, and documentation. It does not include the historical PRTouch/HX711
 auto-Z implementation; probing uses Klipper's upstream CR-Touch support.
+
+## Version 0.2.0 pre-release
+
+- BMCU-Klipper **1.0.6**, with BMCU firmware **1.0.1**, using
+  `generic_single_extruder`: four channels feed one physical extruder.
+- Complete, calibratable load/purge and cutter-free tip-forming/unload sequences.
+- Shared display/macro heating sequence, cancellation, duplicate-click guards,
+  G-code state restoration, and pause/resume/cancel integration.
+- Stock display menus in **English (default)** and **Brazilian Portuguese**,
+  with current/target temperature, printer state and confirmed active channel.
+- 49 automated display and filament regression tests, including real Klipper
+  macro parsing and G-code state handling.
+
+This is a pre-release requiring physical commissioning. Filament load/unload
+starts **disabled** until distances and BMCU arrival are calibrated. Screen
+accents and tip formation have not been verified on the physical assembly.
+See the [0.2.0 release notes](docs/releases/v0.2.0.md).
 
 ## Safety and hardware scope
 
@@ -33,7 +50,8 @@ its contributors provide no warranty; see the GPLv3 warranty terms in
 ## Downloads
 
 Download the newest CI-validated build from
-[GitHub Releases](https://github.com/bernardokcosta/ender3-v3-se-klipper/releases/latest).
+[GitHub Releases](https://github.com/bernardokcosta/ender3-v3-se-klipper-bmcu/releases).
+Pre-releases appear in this list; GitHub's `/releases/latest` may omit them.
 Each release provides:
 
 - `klipper.bin`: MCU firmware for the verified GD32F303 target
@@ -68,9 +86,35 @@ Confirm the MCU path in `config/ender3-v3-se/board.cfg`. PID values, Z offset,
 bed mesh, pressure advance, and input shaping are intentionally not shipped as
 machine-independent values. Calibrate them on the physical printer.
 
+Install BMCU modules/services with the
+[official BMCU-Klipper installer](https://github.com/jarczakpawel/BMCU-Klipper/tree/v1.0.6).
+This repository provides endpoint callbacks and configuration; it does not
+install or replace BMCU's modules. Do not duplicate `[bmcu]`.
+
+Before enabling filament transport, identify the Linux UART device and PC9
+GPIO chip/line, measure switch-to-gear and complete route distances, and tune
+tip formation. The integration deliberately leaves these machine-specific
+values unset. A switch far from the gears stops sensor-based BMCU feeding
+before the extruder can capture the tip; follow the
+[BMCU setup and calibration guide](docs/Ender3_V3_SE_BMCU.md) for arrival modes.
+
+Select the screen language in `ender3-v3-se/display.cfg`:
+
+```ini
+[e3v3se_display]
+language: en
+```
+
+Use `language: pt_BR` for Brazilian Portuguese and restart Klipper. Code,
+comments and documentation remain in English. Menu **Prepare > BMCU channels**
+provides channels 1-4 (command indices 0-3) and full unload. When BMCU is
+unavailable, navigation remains functional and channel actions are blocked.
+
 ## Documentation
 
 - [Installation, build, flashing, and commissioning](docs/Ender3_V3_SE.md)
+- [BMCU installation, wiring, language and physical calibration](docs/Ender3_V3_SE_BMCU.md)
+- [0.2.0 pre-release notes and validation scope](docs/releases/v0.2.0.md)
 - [Stock display architecture and diagnostics](docs/E3V3SE_Display.md)
 - [Fork comparison, issue audit, and port decisions](docs/E3V3SE_Port_Analysis.md)
 - [Official Klipper documentation](https://www.klipper3d.org/)
@@ -103,6 +147,9 @@ same GNU GPLv3 license. The Ender 3 V3 SE work was made possible by:
   and [FinalX1992](https://github.com/FinalX1992) for additional community
   hardware findings used to cross-check TMC UART and screw configuration.
 - Everyone who reported, diagnosed, and fixed issues in those projects.
+- [Pawel Jarczak / jarczakpawel](https://github.com/jarczakpawel) and
+  [BMCU-Klipper](https://github.com/jarczakpawel/BMCU-Klipper) contributors for
+  the external filament transport package and Generic endpoint contract.
 
 The detailed revision and commit provenance is recorded in
 [`docs/E3V3SE_Port_Analysis.md`](docs/E3V3SE_Port_Analysis.md).
