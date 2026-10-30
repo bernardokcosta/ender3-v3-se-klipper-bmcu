@@ -73,6 +73,11 @@ It stages nozzle separation and cooling before the existing sensor/encoder
 unload, and uses buffer-follow assistance after capture. Inspect physical tips
 and verify repeated reloads before treating the starting profile as calibrated.
 
+The integration also guards against cached operation-result identifiers after
+host restarts and preserves virtual-SD prints when a filament change fails.
+See [filament operation and print recovery](docs/Ender3_V3_SE_Print_Recovery.md)
+for guarded path confirmation and resuming the pending change.
+
 Set `language: en` or `language: pt_BR` in `[e3v3se_display]` for the screen UI.
 Source code and maintained project documentation use English. Legacy Portuguese
 G-code command names, configuration keys and backup field names are retained

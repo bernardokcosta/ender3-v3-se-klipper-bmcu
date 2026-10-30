@@ -560,6 +560,9 @@ class IntegrationTests(unittest.TestCase):
             (extras / 'bmcu_core/manager.py').write_text(
                 (BASE / 'manager_original.txt').read_text()
             )
+            daemon = config / 'bmcu/runtime/scripts/bmcu_transportd.py'
+            daemon.parent.mkdir(parents=True)
+            daemon.write_text((BASE / 'transport_original.txt').read_text())
             changes = installer.prepare(home)
             root = changes[(config / 'printer.cfg').resolve()].decode()
             self.assertEqual(root[root.index('#*# <') :], saved)
