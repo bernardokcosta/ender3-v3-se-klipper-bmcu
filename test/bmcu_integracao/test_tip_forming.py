@@ -23,6 +23,9 @@ class TipBench(TestBench):
         self.temperature = self.target = 230.0
         self.pressure = 0.04
         self.fail_cooling = False
+        self.moves = []
+        self.tip_formed = False
+        self.gcode.respond_info = self.respond
         self.extruder.max_e_dist = 50.0
         self.extruder.max_e_velocity = 60.0
         self.extruder.get_heater = lambda: types.SimpleNamespace(
@@ -46,13 +49,24 @@ class TipBench(TestBench):
         self.temperature = self.target
 
     def execute(self, text):
-        if self.fail_cooling and text.startswith('G1 E10.'):
+        if self.fail_cooling and text.startswith('G1 E1.'):
             raise RuntimeError('cooling interrupted')
+        if text.startswith('G1 E'):
+            self.moves.append(
+                (
+                    float(text.split('E')[1].split()[0]),
+                    self.device.status['motion'][3],
+                )
+            )
         super().execute(text)
         if text.startswith('SET_PRESSURE_ADVANCE'):
             self.pressure = float(text.split('ADVANCE=')[1].split()[0])
         if text.startswith('SET_HEATER_TEMPERATURE'):
             self.target = float(text.split('TARGET=')[1])
+
+    def respond(self, message):
+        if 'tip-forming moves completed' in message:
+            self.tip_formed = True
 
     def unload(self):
         self.motion(3, protocol.MOTION_BEFORE_PULL_BACK)
@@ -85,8 +99,12 @@ class TipFormingTests(unittest.TestCase):
 
         b.reactor.pause = recover
         b.unload()
-        self.assertEqual(observations[0], (0, protocol.MOTION_ON_USE))
-        self.assertEqual(observations[1], (0, protocol.MOTION_ON_USE))
+        self.assertEqual(
+            observations[0], (0, protocol.MOTION_BEFORE_PULL_BACK)
+        )
+        self.assertEqual(
+            observations[1], (0, protocol.MOTION_BEFORE_PULL_BACK)
+        )
         self.assertEqual([(3, 55.0)], b.policies)
 
     def test_encoder_stall_stops_before_full_switch_timeout(self):
@@ -97,12 +115,12 @@ class TipFormingTests(unittest.TestCase):
         def stall_after_forming(text):
             position = b.device.status['meters'][3]
             execute(text)
-            if text.startswith('G1 E-2.'):
+            if b.tip_formed and text.startswith('G1 E-1.'):
                 b.device.status['meters'][3] = position
 
         b.gcode.run_script_from_command = stall_after_forming
         with self.assertRaisesRegex(
-            RuntimeError, 'No encoder pullback progress.*encoder pullback'
+            RuntimeError, 'Feeder did not follow extruder withdrawal'
         ):
             b.unload()
         self.assertLess(b.reverse, b.switch_distance)
@@ -120,16 +138,152 @@ class TipFormingTests(unittest.TestCase):
     def test_cooling_keeps_filament_gripped_until_final_unload(self):
         b = TipBench()
         b.unload()
-        self.assertAlmostEqual(b.e, -67.0)
+        self.assertAlmostEqual(b.e, -66.0)
         self.assertFalse(b.obj.sensor(b.endpoint))
         self.assertEqual([(3, 55.0)], b.policies)
         self.assertAlmostEqual(b.pressure, 0.04)
         self.assertEqual(b.target, 230)
         self.assertEqual(b.device.status['motion'], [0, 0, 0, 0])
         self.assertEqual(b.critical_depth, 0)
-        self.assertEqual(
-            len([c for c in b.commands if c.startswith('G1 E10.')]), 4
+        self.assertAlmostEqual(sum(mm for mm, mode in b.moves if mm > 0), 40)
+        self.assertTrue(all(abs(mm) <= 1 for mm, mode in b.moves))
+        self.assertTrue(
+            all(
+                mode
+                == (
+                    protocol.MOTION_BEFORE_PULL_BACK
+                    if mm < 0
+                    else protocol.MOTION_ON_USE
+                )
+                for mm, mode in b.moves
+            )
         )
+
+    def test_stalled_feeder_cannot_accumulate_a_long_tip_retraction(self):
+        b = TipBench()
+        execute = b.execute
+
+        def stalled(text):
+            before = b.device.status['meters'][3]
+            execute(text)
+            if text.startswith('G1 E'):
+                b.device.status['meters'][3] = before
+
+        b.gcode.run_script_from_command = stalled
+        with self.assertRaisesRegex(RuntimeError, 'encoder lag 2.00 mm'):
+            b.unload()
+        self.assertAlmostEqual(b.e, -2)
+        self.assertFalse(b.tip_formed)
+        self.assertEqual([], b.policies)
+        self.assertEqual(b.device.status['motion'], [0, 0, 0, 0])
+        self.assertAlmostEqual(b.pressure, 0.04)
+
+    def test_feeder_catches_up_while_extruder_stays_still(self):
+        b = TipBench()
+        execute = b.execute
+        pause = b.pause
+        lagging = True
+        observations = []
+
+        def delayed(text):
+            before = b.device.status['meters'][3]
+            execute(text)
+            if lagging and text.startswith('G1 E'):
+                b.device.status['meters'][3] = before
+
+        def catch_up(timeout):
+            nonlocal lagging
+            if lagging:
+                observations.append((b.e, b.device.status['motion'][3]))
+                b.device.status['meters'][3] = 0.170 + b.e / 1000
+                lagging = False
+            pause(timeout)
+
+        b.gcode.run_script_from_command = delayed
+        b.reactor.pause = catch_up
+        b.unload()
+        self.assertEqual(
+            observations, [(-2.0, protocol.MOTION_BEFORE_PULL_BACK)]
+        )
+        self.assertEqual([(3, 55.0)], b.policies)
+
+    def test_assistance_stopping_aborts_before_another_extruder_step(self):
+        b = TipBench()
+        refresh = b.refresh
+
+        def stopped():
+            refresh()
+            if b.e <= -1:
+                b.device.status['motion'][3] = protocol.MOTION_IDLE
+
+        b.device.refresh = stopped
+        with self.assertRaisesRegex(
+            RuntimeError, 'withdrawal assistance stopped'
+        ):
+            b.unload()
+        self.assertAlmostEqual(b.e, -1)
+        self.assertEqual([], b.policies)
+
+    def test_encoder_credit_is_not_reset_between_forming_stages(self):
+        b = TipBench()
+        execute = b.execute
+        frozen = False
+
+        def delayed(text):
+            nonlocal frozen
+            before = b.device.status['meters'][3]
+            execute(text)
+            if b.e <= -14:
+                frozen = True
+            if frozen and text.startswith('G1 E'):
+                b.device.status['meters'][3] = before
+
+        b.gcode.run_script_from_command = delayed
+        with self.assertRaisesRegex(RuntimeError, 'Feeder did not follow'):
+            b.unload()
+        self.assertAlmostEqual(b.e, -15)
+        self.assertEqual([], b.policies)
+
+    def test_worsening_mismatch_does_not_wait_the_full_timeout(self):
+        b = TipBench()
+        execute = b.execute
+        pause = b.pause
+
+        def wrong_direction(text):
+            before = b.device.status['meters'][3]
+            execute(text)
+            if text.startswith('G1 E-1.'):
+                b.device.status['meters'][3] = before + 0.001
+
+        def feeding(timeout):
+            b.device.status['meters'][3] += 0.0005
+            pause(timeout)
+
+        b.gcode.run_script_from_command = wrong_direction
+        b.reactor.pause = feeding
+        with self.assertRaisesRegex(RuntimeError, 'mismatch exceeded'):
+            b.unload()
+        self.assertAlmostEqual(b.e, -1)
+        self.assertLess(b.timeout, 1)
+        self.assertEqual([], b.policies)
+        self.assertEqual(b.device.status['motion'], [0, 0, 0, 0])
+
+    def test_forward_cooling_oversupply_also_aborts(self):
+        b = TipBench()
+        execute = b.execute
+
+        def oversupply(text):
+            before = b.device.status['meters'][3]
+            execute(text)
+            if text.startswith('G1 E1.'):
+                b.device.status['meters'][3] = before + 0.004
+
+        b.gcode.run_script_from_command = oversupply
+        with self.assertRaisesRegex(RuntimeError, 'mismatch exceeded'):
+            b.unload()
+        self.assertAlmostEqual(b.e, -44)
+        self.assertEqual([], b.policies)
+        self.assertEqual(b.device.status['motion'], [0, 0, 0, 0])
 
     def test_cooling_failure_stops_and_preserves_route_evidence(self):
         b = TipBench()
