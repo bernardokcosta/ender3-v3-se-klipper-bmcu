@@ -52,6 +52,7 @@ class EnderIntegration:
         self.manual_operation = None
         self.pending_tool_change = None
         self.recovering_tool_change = False
+        self.last_unload_timing = {}
         self.original_wait_pullback = self.bmcu._wait_pullback_safe
         self.bmcu._wait_pullback_safe = self.wait_pullback
         self.gcode.register_command(
@@ -145,7 +146,13 @@ class EnderIntegration:
                 device, channel, *args, **kwargs
             )
         kwargs['start_m'] = record['start']
-        result = self.original_wait_pullback(device, channel, *args, **kwargs)
+        try:
+            result = self.original_wait_pullback(
+                device, channel, *args, **kwargs
+            )
+        except Exception:
+            self.record_parking_timing(record, 'parking_failed')
+            raise
         self.reactor.pause(self.reactor.monotonic() + 0.150)
         device.refresh()
         measured = (
@@ -175,11 +182,26 @@ class EnderIntegration:
                     )
                 )
         except Exception:
+            self.record_parking_timing(record, 'parking_failed')
             device.stop_all()
             raise
         result = dict(result)
         result['encoder_mm'] = measured
         result['after_switch_encoder_mm'] = measured
+        timing = self.record_parking_timing(record, 'complete')
+        if timing is not None:
+            self.gcode.respond_info(
+                'Channel %d unload timing: positioning %.2f s; tip %.2f s; '
+                'sensor release %.2f s; feeder parking %.2f s; total %.2f s.'
+                % (
+                    channel + 1,
+                    timing['position_seconds'],
+                    timing['tip_seconds'],
+                    timing['release_seconds'],
+                    timing['parking_seconds'],
+                    timing['total_seconds'],
+                )
+            )
         self.gcode.respond_info(
             (
                 (
@@ -191,6 +213,17 @@ class EnderIntegration:
             % (channel + 1, measured)
         )
         return result
+
+    def record_parking_timing(self, record, result):
+        timing = record.get('timing')
+        if timing is None:
+            return None
+        now = self.reactor.monotonic()
+        timing['parking_seconds'] = now - record['parking_started']
+        timing['total_seconds'] = now - record['unload_started']
+        timing['result'] = result
+        self.last_unload_timing = dict(timing)
+        return timing
 
     def adapt_operation(self, previous):
         def execute(gcmd):
@@ -248,6 +281,7 @@ class EnderIntegration:
             'recovery_pending': pending is not None,
             'recovery_tool': pending['tool'] if pending else -1,
             'recovery_error': pending['error'] if pending else '',
+            'unload_timing': dict(getattr(self, 'last_unload_timing', {})),
         }
 
     def cancel_recovery(self, previous):
@@ -673,15 +707,18 @@ class EnderIntegration:
             raise RuntimeError('Channel assigned to another extruder.')
         return device, destination, channel
 
-    def verify_session(self, device, session, channel):
-        device.refresh()
+    def verify_session(self, device, session, channel, refresh=True):
+        if refresh:
+            device.refresh()
         if device.status['session_id'] != session:
             raise RuntimeError('The BMCU restarted during the tool change.')
         if not device.status['present'][channel]:
             raise RuntimeError('The channel lost filament detection.')
 
-    def wait_unload_buffer(self, device, destination, channel, session):
-        self.verify_session(device, session, channel)
+    def wait_unload_buffer(
+        self, device, destination, channel, session, refresh=True
+    ):
+        self.verify_session(device, session, channel, refresh=refresh)
         if device.status['buffer_pct'][channel] <= self.unload_buffer_limit:
             return
         self.gcode.respond_info(
@@ -712,12 +749,19 @@ class EnderIntegration:
         return gap, measured
 
     def wait_unload_encoder(
-        self, device, destination, channel, session, tracking, step
+        self,
+        device,
+        destination,
+        channel,
+        session,
+        tracking,
+        step,
+        refresh=True,
     ):
         deadline = self.reactor.monotonic() + self.unload_progress_timeout
         announced = False
         while self.sensor(destination):
-            self.verify_session(device, session, channel)
+            self.verify_session(device, session, channel, refresh=refresh)
             if device.status['motion'][channel] != (
                 protocol.MOTION_BEFORE_PULL_BACK
             ):
@@ -739,6 +783,7 @@ class EnderIntegration:
                     % (gap, tracking['commanded'], measured)
                 )
             self.reactor.pause(self.reactor.monotonic() + 0.100)
+            refresh = True
 
     def move_unload_filament(
         self,
@@ -764,11 +809,23 @@ class EnderIntegration:
         remaining = abs(mm)
         completed = 0.0
         while remaining > 0.000001:
-            self.wait_unload_buffer(device, destination, channel, session)
+            self.wait_unload_buffer(
+                device,
+                destination,
+                channel,
+                session,
+                refresh=(completed == 0.0),
+            )
             step = min(limit, remaining)
             if mm < 0:
                 self.wait_unload_encoder(
-                    device, destination, channel, session, tracking, step
+                    device,
+                    destination,
+                    channel,
+                    session,
+                    tracking,
+                    step,
+                    refresh=False,
                 )
             if not self.sensor(destination):
                 if allow_clear:
@@ -776,7 +833,7 @@ class EnderIntegration:
                 raise RuntimeError(
                     'Filament left the entry sensor during tip forming.'
                 )
-            self.verify_session(device, session, channel)
+            self.verify_session(device, session, channel, refresh=False)
             if device.status['motion'][channel] != mode:
                 raise RuntimeError(
                     'Feeder assistance changed during withdrawal.'
@@ -1107,6 +1164,8 @@ class EnderIntegration:
         total = 0.0
         tracking = None
         saved = False
+        started = self.reactor.monotonic()
+        timing = {'result': 'in_progress'}
         try:
             device, destination, channel = self.context(gcmd, False)
             session = device.status['session_id']
@@ -1124,9 +1183,14 @@ class EnderIntegration:
                 'start': float(device.status['meters'][channel]),
                 'commanded': 0.0,
             }
+            timing['channel'] = channel + 1
+            timing['position_seconds'] = self.reactor.monotonic() - started
+            tip_started = self.reactor.monotonic()
             total = self.form_tip(
                 device, destination, channel, session, tracking
             )
+            timing['tip_seconds'] = self.reactor.monotonic() - tip_started
+            release_started = self.reactor.monotonic()
             device.refresh()
             marker = float(device.status['meters'][channel])
             search_start = progress_marker = marker
@@ -1142,9 +1206,6 @@ class EnderIntegration:
                             'timeout.'
                         )
                     )
-                self.wait_unload_buffer(device, destination, channel, session)
-                if not self.sensor(destination):
-                    break
                 moved = self.move_unload_filament(
                     device,
                     destination,
@@ -1156,7 +1217,7 @@ class EnderIntegration:
                     allow_clear=True,
                 )
                 total += abs(moved)
-                self.verify_session(device, session, channel)
+                self.verify_session(device, session, channel, refresh=False)
                 current = float(device.status['meters'][channel])
                 if (progress_marker - current) * 1000.0 >= 1.0:
                     progress_marker = current
@@ -1192,15 +1253,26 @@ class EnderIntegration:
             device.stop_all()
             self.reactor.pause(self.reactor.monotonic() + 0.050)
             device.refresh()
+            timing['release_seconds'] = (
+                self.reactor.monotonic() - release_started
+            )
+            timing['result'] = 'awaiting_parking'
+            self.last_unload_timing = dict(timing)
             self.temporary_pullbacks[device.name] = {
                 'channel': channel,
                 'start': float(device.status['meters'][channel]),
                 'session': session,
+                'timing': timing,
+                'unload_started': started,
+                'parking_started': self.reactor.monotonic(),
             }
             self.bmcu._send_device_runtime_config(
                 device, channel_retract_override=(channel, self.pullback)
             )
         except Exception as error:
+            timing['result'] = 'failed'
+            timing['total_seconds'] = self.reactor.monotonic() - started
+            self.last_unload_timing = dict(timing)
             evidence = ''
             if device is not None and channel is not None:
                 status = device.status

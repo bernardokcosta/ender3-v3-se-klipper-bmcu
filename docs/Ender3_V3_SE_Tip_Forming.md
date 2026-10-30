@@ -77,6 +77,30 @@ slip, blockage or damaged fitting. These are feedback checks, not synchronized
 motor steps or a force measurement. The new withdrawal sequence requires a
 physical unload/reload test before multi-color printing.
 
+### Withdrawal timing and status traffic
+
+Each completed withdrawal increment now supplies one fresh status snapshot for
+the following buffer, session, assistance-mode and encoder checks. Consecutive
+checks reuse that snapshot only until another move or explicit wait occurs.
+Buffer recovery and encoder catch-up waits continue to request fresh status
+after yielding. The existing 1 mm increments, 2 mm encoder allowance, buffer
+thresholds and requested forming speeds remain in effect.
+
+In the synthetic successful 66 mm unload fixture, status requests dropped from
+578 to 181 for the same 146 forming/cooling/withdrawal moves. This measures
+communication traffic, not a percentage improvement in physical print time.
+Every increment still waits for motion completion. Further overlap of motion
+and communication needs separate validation of the bounded motion queue.
+
+After encoder-confirmed parking, the console reports elapsed positioning,
+tip-forming, sensor-release, feeder-parking and total sequence times. The same
+values are exposed as `bmcu_integracao_ender.unload_timing`, with a result of
+`awaiting_parking`, `complete`, `failed` or `parking_failed`. The total begins
+inside the extruder-release hook; it excludes earlier manual preheating and
+native load/unload preparation. Parking time includes the final encoder check.
+These measurements identify the next bottleneck without changing temperature,
+cooling cycles or filament travel based on an unmeasured total button time.
+
 The buffer limit, recovery threshold and timeouts are editable in
 `[bmcu_integracao_ender]` as `limite_buffer_recuo`, `retomar_buffer_recuo`,
 `tempo_buffer_recuo` and `tempo_sem_recuo`. Existing custom sequence settings
