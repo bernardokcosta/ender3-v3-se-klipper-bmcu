@@ -168,6 +168,8 @@ class TestBench:
             unload_buffer_resume=65.0,
             unload_buffer_timeout=3.0,
             unload_progress_timeout=3.0,
+            unload_step=1.0,
+            unload_slack=2.0,
             timeout=60,
             purge_x=-6.0,
             wipe_x=-4.0,

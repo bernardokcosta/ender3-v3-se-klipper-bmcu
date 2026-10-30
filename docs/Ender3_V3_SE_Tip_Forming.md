@@ -15,7 +15,9 @@ mode used during printing, instead of repeatedly entering pre-capture push mode.
 2. Move to the configured purge position and save extrusion state.
 3. Optionally wait for a dedicated tip-forming temperature; zero preserves the
    current temperature. Keep the original heater target for the next load.
-4. Temporarily disable pressure advance and use buffer-follow assistance.
+4. Temporarily disable pressure advance. Use withdrawal assistance
+   (`MOTION_BEFORE_PULL_BACK`) for retractions and buffer-follow assistance
+   (`MOTION_ON_USE`) for forward cooling moves.
 5. Retract 15 mm at 20 mm/s, then approach a 35–45 mm cooling region at
    progressively lower speeds.
 6. Perform four 10 mm cooling cycles at progressively increasing speeds.
@@ -40,6 +42,40 @@ net pullback over three seconds. A timeout or stalled encoder reports commanded
 distance, encoder displacement after forming, buffer percentage, PWM and motion
 mode. No failed operation is confirmed as parked. These checks cannot detect
 every kind of slippage or prove that the nozzle is clear.
+
+### Encoder checks throughout tip forming
+
+Tip forming previously checked buffer pressure only between movements as long
+as 15 or 21 mm, while keeping the feeder in printing FOLLOW mode. A reported
+PTFE disconnection during withdrawal exposed the limitation of that sequence:
+the final-search checks did not bound uncollected filament during forming.
+
+All forming and final-search extrusion moves now run in monitored increments
+of at most 1 mm by default. Each retraction selects withdrawal assistance before
+moving the extruder. Forward cooling moves select FOLLOW. Both encoder and
+entry sensor are checked between increments; UART requests remain outside
+Klipper's movement critical sections.
+
+One encoder reference is kept across the entire unload, including forward and
+backward cooling strokes. Before each retraction increment, the integration
+compares cumulative commanded extrusion with signed feeder encoder travel.
+With the default 2 mm allowance, it does not command another retraction that
+would exceed that difference. The extruder waits while withdrawal assistance
+remains active; failure to catch up within `tempo_sem_recuo` aborts and stops
+the feeder without confirming parking. An unexpected assistance-mode change
+also aborts the operation.
+
+The defaults `passo_recuo_mm: 1` and `folga_recuo_mm: 2` can be configured in
+`[bmcu_integracao_ender]`. Existing configurations use these defaults without
+overwriting custom distances or tip settings. The capture, nozzle feed, 35 mm
+purge, 55 mm parking, cooling distances, requested speeds and temperatures are
+unchanged. Actual forming time can increase because each increment waits for
+completion and feedback. The resulting tip still needs physical inspection.
+
+Encoder travel is measured at the feeder; it cannot detect every downstream
+slip, blockage or damaged fitting. These are feedback checks, not synchronized
+motor steps or a force measurement. The new withdrawal sequence requires a
+physical unload/reload test before multi-color printing.
 
 The buffer limit, recovery threshold and timeouts are editable in
 `[bmcu_integracao_ender]` as `limite_buffer_recuo`, `retomar_buffer_recuo`,

@@ -36,6 +36,8 @@ class EnderIntegration:
         self.unload_progress_timeout = config.getfloat(
             'tempo_sem_recuo', 3.0, above=0.0
         )
+        self.unload_step = config.getfloat('passo_recuo_mm', 1.0, above=0.0)
+        self.unload_slack = config.getfloat('folga_recuo_mm', 2.0, above=0.0)
         self.pullback = config.getfloat(
             'recuo_apos_switch_mm', 55.0, above=0.0
         )
@@ -440,6 +442,105 @@ class EnderIntegration:
             self.reactor.pause(self.reactor.monotonic() + 0.100)
             self.verify_session(device, session, channel)
 
+    def unload_encoder_gap(self, device, channel, tracking):
+        measured = (
+            float(device.status['meters'][channel]) - tracking['start']
+        ) * 1000.0
+        gap = measured - tracking['commanded']
+        if not math.isfinite(gap):
+            raise RuntimeError('Invalid withdrawal encoder position.')
+        if gap > self.unload_slack + 0.05:
+            raise RuntimeError(
+                'Feeder/extruder mismatch exceeded the withdrawal allowance; '
+                'encoder lag %.2f mm.' % gap
+            )
+        return gap, measured
+
+    def wait_unload_encoder(
+        self, device, destination, channel, session, tracking, step
+    ):
+        deadline = self.reactor.monotonic() + self.unload_progress_timeout
+        announced = False
+        while self.sensor(destination):
+            self.verify_session(device, session, channel)
+            if device.status['motion'][channel] != (
+                protocol.MOTION_BEFORE_PULL_BACK
+            ):
+                raise RuntimeError('Feeder withdrawal assistance stopped.')
+            gap, measured = self.unload_encoder_gap(device, channel, tracking)
+            if gap + step <= self.unload_slack + 0.000001:
+                return
+            if not announced:
+                self.gcode.respond_info(
+                    'Channel %d: extruder waiting for feeder pullback; '
+                    'encoder lag %.2f mm.' % (channel + 1, gap)
+                )
+                announced = True
+            if self.reactor.monotonic() >= deadline:
+                raise RuntimeError(
+                    'Feeder did not follow extruder withdrawal; '
+                    'encoder lag %.2f mm, commanded net %.2f mm, '
+                    'measured net %.2f mm.'
+                    % (gap, tracking['commanded'], measured)
+                )
+            self.reactor.pause(self.reactor.monotonic() + 0.100)
+
+    def move_unload_filament(
+        self,
+        device,
+        destination,
+        channel,
+        session,
+        tracking,
+        mm,
+        speed,
+        allow_clear=False,
+    ):
+        mode = (
+            protocol.MOTION_BEFORE_PULL_BACK
+            if mm < 0
+            else protocol.MOTION_ON_USE
+        )
+        device.set_motion(channel, mode)
+        extruder = self.printer.lookup_object('extruder')
+        limit = min(
+            self.unload_step, self.unload_slack / 2, extruder.max_e_dist
+        )
+        remaining = abs(mm)
+        completed = 0.0
+        while remaining > 0.000001:
+            self.wait_unload_buffer(device, destination, channel, session)
+            step = min(limit, remaining)
+            if mm < 0:
+                self.wait_unload_encoder(
+                    device, destination, channel, session, tracking, step
+                )
+            if not self.sensor(destination):
+                if allow_clear:
+                    return completed
+                raise RuntimeError(
+                    'Filament left the entry sensor during tip forming.'
+                )
+            self.verify_session(device, session, channel)
+            if device.status['motion'][channel] != mode:
+                raise RuntimeError(
+                    'Feeder assistance changed during withdrawal.'
+                )
+            signed = -step if mm < 0 else step
+            self.move_filament(signed, speed, chunk=limit)
+            tracking['commanded'] += signed
+            completed += signed
+            remaining -= step
+            self.wait_unload_buffer(device, destination, channel, session)
+            if not self.sensor(destination):
+                if allow_clear:
+                    return completed
+                raise RuntimeError(
+                    'Filament left the entry sensor during tip forming.'
+                )
+            self.unload_encoder_gap(device, channel, tracking)
+        return completed
+
     def position_head(self):
         toolhead = self.printer.lookup_object('toolhead')
         status = toolhead.get_status(self.reactor.monotonic())
@@ -534,7 +635,7 @@ class EnderIntegration:
             )
         return settings
 
-    def form_tip(self, device, destination, channel, session):
+    def form_tip(self, device, destination, channel, session, tracking):
         settings = self.tip_settings()
         if settings is None:
             return 0.0
@@ -570,16 +671,17 @@ class EnderIntegration:
                     self.reactor.pause(self.reactor.monotonic() + 0.250)
             self.execute('SET_PRESSURE_ADVANCE EXTRUDER=extruder ADVANCE=0')
             changed_pressure = True
-            device.set_motion(channel, protocol.MOTION_ON_USE)
-            self.wait_unload_buffer(device, destination, channel, session)
             if not self.sensor(destination):
                 raise RuntimeError('Filament left before tip forming.')
-            self.move_filament(
+            self.move_unload_filament(
+                device,
+                destination,
+                channel,
+                session,
+                tracking,
                 -settings['separation_mm'],
                 settings['separation_f'],
-                chunk=extruder.max_e_dist,
             )
-            self.wait_unload_buffer(device, destination, channel, session)
             remaining = (
                 settings['cooling_position_mm']
                 + settings['cooling_length_mm']
@@ -592,12 +694,15 @@ class EnderIntegration:
                         'Cooling position passed the entry sensor; '
                         'reduce the tip-forming distances.'
                     )
-                self.move_filament(
+                self.move_unload_filament(
+                    device,
+                    destination,
+                    channel,
+                    session,
+                    tracking,
                     -remaining * fraction,
                     settings['cooling_f'] * factor,
-                    chunk=extruder.max_e_dist,
                 )
-                self.wait_unload_buffer(device, destination, channel, session)
             count = int(settings['cooling_moves'])
             for index in range(count):
                 self.verify_session(device, session, channel)
@@ -607,16 +712,24 @@ class EnderIntegration:
                     settings['cooling_final_f'] - settings['cooling_f']
                 ) / (2 * count - 1)
                 forward = settings['cooling_f'] + increment * 2 * index
-                self.execute(
-                    'G1 E%.9f F%.9f\nG1 E%.9f F%.9f\nM400'
-                    % (
-                        settings['cooling_length_mm'],
-                        forward,
-                        -settings['cooling_length_mm'],
-                        forward + increment,
-                    )
+                self.move_unload_filament(
+                    device,
+                    destination,
+                    channel,
+                    session,
+                    tracking,
+                    settings['cooling_length_mm'],
+                    forward,
                 )
-                self.wait_unload_buffer(device, destination, channel, session)
+                self.move_unload_filament(
+                    device,
+                    destination,
+                    channel,
+                    session,
+                    tracking,
+                    -settings['cooling_length_mm'],
+                    forward + increment,
+                )
             deadline = self.reactor.monotonic() + settings['pause_ms'] / 1000
             while self.reactor.monotonic() < deadline:
                 if not self.sensor(destination):
@@ -737,6 +850,7 @@ class EnderIntegration:
         channel = None
         search_start = None
         total = 0.0
+        tracking = None
         saved = False
         try:
             device, destination, channel = self.context(gcmd, False)
@@ -750,7 +864,14 @@ class EnderIntegration:
                 raise RuntimeError(
                     'The entry sensor was already clear before unloading.'
                 )
-            total = self.form_tip(device, destination, channel, session)
+            self.verify_session(device, session, channel)
+            tracking = {
+                'start': float(device.status['meters'][channel]),
+                'commanded': 0.0,
+            }
+            total = self.form_tip(
+                device, destination, channel, session, tracking
+            )
             device.refresh()
             marker = float(device.status['meters'][channel])
             search_start = progress_marker = marker
@@ -769,8 +890,17 @@ class EnderIntegration:
                 self.wait_unload_buffer(device, destination, channel, session)
                 if not self.sensor(destination):
                     break
-                self.move_filament(-2.0, self.pullback_speed, chunk=2.0)
-                total += 2.0
+                moved = self.move_unload_filament(
+                    device,
+                    destination,
+                    channel,
+                    session,
+                    tracking,
+                    -2.0,
+                    self.pullback_speed,
+                    allow_clear=True,
+                )
+                total += abs(moved)
                 self.verify_session(device, session, channel)
                 current = float(device.status['meters'][channel])
                 if (progress_marker - current) * 1000.0 >= 1.0:
@@ -834,6 +964,10 @@ class EnderIntegration:
                             (search_start - float(status['meters'][channel]))
                             * 1000.0,
                         )
+                    )
+                if tracking is not None:
+                    evidence += (
+                        ' Total commanded net %.2f mm.' % tracking['commanded']
                     )
             raise gcmd.error(
                 'Unload interrupted: %s%s' % (error, evidence)
