@@ -153,12 +153,12 @@ class EnderIntegration:
         except Exception:
             self.record_parking_timing(record, 'parking_failed')
             raise
-        self.reactor.pause(self.reactor.monotonic() + 0.150)
-        device.refresh()
-        measured = (
-            record['start'] - float(device.status['meters'][channel])
-        ) * 1000.0
         try:
+            self.reactor.pause(self.reactor.monotonic() + 0.150)
+            device.refresh()
+            measured = (
+                record['start'] - float(device.status['meters'][channel])
+            ) * 1000.0
             if device.status['session_id'] != record['session']:
                 raise RuntimeError('The BMCU restarted during pullback.')
             if not math.isfinite(measured) or measured + 0.1 < self.pullback:

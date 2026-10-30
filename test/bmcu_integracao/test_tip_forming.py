@@ -143,6 +143,19 @@ class TipFormingTests(unittest.TestCase):
             b.obj.wait_pullback(b.device, 3)
         self.assertEqual('parking_failed', b.obj.last_unload_timing['result'])
 
+    def test_missing_final_parking_readback_records_failed_timing(self):
+        b = TipBench()
+        b.unload()
+        b.obj.original_wait_pullback = lambda *args, **kwargs: {'ok': True}
+
+        def unavailable():
+            raise RuntimeError('no final status')
+
+        b.device.refresh = unavailable
+        with self.assertRaisesRegex(RuntimeError, 'no final status'):
+            b.obj.wait_pullback(b.device, 3)
+        self.assertEqual('parking_failed', b.obj.last_unload_timing['result'])
+
     def test_compressed_buffer_aborts_without_further_extrusion(self):
         b = TipBench()
         b.device.status['buffer_pct'][3] = 80
