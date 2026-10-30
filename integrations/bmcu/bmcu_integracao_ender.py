@@ -1,3 +1,4 @@
+import copy
 import logging
 import math
 
@@ -49,6 +50,8 @@ class EnderIntegration:
         self.wipe_passes = config.getint('limpezas', 3, minval=1)
         self.temporary_pullbacks = {}
         self.manual_operation = None
+        self.pending_tool_change = None
+        self.recovering_tool_change = False
         self.original_wait_pullback = self.bmcu._wait_pullback_safe
         self.bmcu._wait_pullback_safe = self.wait_pullback
         self.gcode.register_command(
@@ -63,9 +66,31 @@ class EnderIntegration:
         self.gcode.register_command(
             'BMCU_ENDER_MANUAL', self.protect(self.manual_filament)
         )
+        self.gcode.register_command(
+            'BMCU_CONFIRMAR_CAMINHO_LIVRE',
+            self.protect(self.confirm_recovery_path),
+        )
         self.printer.register_event_handler('klippy:ready', self.ready)
+        for event in ('stepper_enable:motor_off', 'homing:home_rails_begin'):
+            self.printer.register_event_handler(
+                event, self.invalidate_recovery
+            )
 
     def ready(self):
+        for name in ('RESUME', 'CANCEL_PRINT', 'SDCARD_RESET_FILE'):
+            previous = self.gcode.register_command(name, None)
+            if previous is None:
+                raise self.printer.config_error(
+                    'Command %s was not found.' % name
+                )
+            self.gcode.register_command(
+                name,
+                self.protect(
+                    self.resume_print(previous)
+                    if name == 'RESUME'
+                    else self.cancel_recovery(previous)
+                ),
+            )
         for name in (
             'BMCU_LOAD',
             'BMCU_UNLOAD',
@@ -217,7 +242,234 @@ class EnderIntegration:
         return bool(status['filament_detected'])
 
     def get_status(self, eventtime):
-        return {'manual_busy': self.manual_operation is not None}
+        pending = getattr(self, 'pending_tool_change', None)
+        return {
+            'manual_busy': self.manual_operation is not None,
+            'recovery_pending': pending is not None,
+            'recovery_tool': pending['tool'] if pending else -1,
+            'recovery_error': pending['error'] if pending else '',
+        }
+
+    def cancel_recovery(self, previous):
+        def execute(gcmd):
+            self.pending_tool_change = None
+            return previous(gcmd)
+
+        return execute
+
+    def invalidate_recovery(self, *args):
+        pending = getattr(self, 'pending_tool_change', None)
+        if pending is not None:
+            pending['position_lost'] = True
+
+    def hold_failed_tool_change(self, gcmd, tool, error, nozzle_target):
+        if getattr(self, 'recovering_tool_change', False):
+            return False
+        sd = self.printer.lookup_object('virtual_sdcard', None)
+        pause = self.printer.lookup_object('pause_resume', None)
+        if (
+            sd is None
+            or pause is None
+            or sd.current_file is None
+            or not sd.is_cmd_from_sd()
+            or self.printer.is_shutdown()
+        ):
+            return False
+        stats = self.printer.lookup_object('print_stats').get_status(
+            self.reactor.monotonic()
+        )
+        if stats['state'] not in ('printing', 'paused'):
+            return False
+        move = self.printer.lookup_object('gcode_move')
+        saved = copy.deepcopy(move.saved_states['BMCU_ENDER_TROCA'])
+        try:
+            self.bmcu.devices_by_name[self.device].stop_all()
+        except Exception:
+            logging.exception(
+                'Could not confirm the BMCU stopped before pausing.'
+            )
+        last_error = self.bmcu.get_status(self.reactor.monotonic()).get(
+            'last_error'
+        )
+        self.pending_tool_change = {
+            'tool': tool,
+            'error': str(error),
+            'file': sd.current_file,
+            'position': sd.get_file_position(),
+            'state': saved,
+            'nozzle_target': nozzle_target,
+            'session': self.bmcu.devices_by_name[self.device].status[
+                'session_id'
+            ],
+            'failed_channel': (
+                last_error.get('channel')
+                if isinstance(last_error, dict)
+                and last_error.get('device') == self.device
+                else None
+            ),
+        }
+        pause.cmd_PAUSE(gcmd)
+        move.saved_states['PAUSE_STATE'] = copy.deepcopy(saved)
+        gcmd.respond_info(
+            'Print paused with tool T%d pending: %s. Check the filament path, '
+            'then RESUME will finish this tool change before printing.'
+            % (tool, error)
+        )
+        return True
+
+    def validate_print_recovery(self, check_routes=True):
+        pending = self.pending_tool_change
+        if pending is None:
+            raise RuntimeError('There is no pending print recovery.')
+        sd = self.printer.lookup_object('virtual_sdcard')
+        pause = self.printer.lookup_object('pause_resume')
+        if (
+            not pause.is_paused
+            or sd.is_active()
+            or sd.current_file is not pending['file']
+            or sd.file_position != pending['position']
+            or self.printer.is_shutdown()
+            or pending.get('position_lost')
+        ):
+            raise RuntimeError(
+                'The paused print changed; recovery is blocked.'
+            )
+        if self.bmcu.active_operations:
+            raise RuntimeError('A BMCU operation is still active.')
+        head = self.printer.lookup_object('toolhead').get_status(
+            self.reactor.monotonic()
+        )
+        if not all(axis in head['homed_axes'] for axis in 'xyz'):
+            raise RuntimeError('Position was lost; print recovery is blocked.')
+        move = self.printer.lookup_object('gcode_move')
+        if list(move.homing_position) != pending['state']['homing_position']:
+            raise RuntimeError(
+                'The coordinate offset changed during recovery.'
+            )
+        device = self.bmcu.devices_by_name[self.device]
+        if not device.ready or getattr(device, 'last_error', ''):
+            raise RuntimeError('The BMCU is not ready for recovery.')
+        device.refresh()
+        if device.status['session_id'] != pending['session']:
+            raise RuntimeError(
+                'The BMCU session changed; print recovery is blocked.'
+            )
+        if not check_routes:
+            return device
+        routes = [self.bmcu._route_state(device, ch) for ch in range(4)]
+        if protocol.ROUTE_UNCERTAIN in routes:
+            raise RuntimeError(
+                'An uncertain filament route needs physical recovery; '
+                'the print remains paused.'
+            )
+        loaded = routes.count(protocol.ROUTE_LOADED)
+        detected = self.sensor(self.bmcu.endpoints[self.destination])
+        if loaded > 1 or detected != (loaded == 1):
+            raise RuntimeError(
+                'The entry sensor and filament routes disagree.'
+            )
+
+    def confirm_recovery_path(self, gcmd):
+        channel = gcmd.get_int('CANAL', minval=1, maxval=4) - 1
+        if gcmd.get_int('CONFIRMAR', 0, minval=0, maxval=1) != 1:
+            raise gcmd.error(
+                'Physically clear the shared path and park this filament '
+                'behind the entry sensor before CONFIRMAR=1.'
+            )
+        device = self.validate_print_recovery(check_routes=False)
+        if self.pending_tool_change.get('failed_channel') != channel:
+            raise gcmd.error('This channel does not match the paused failure.')
+        destination = self.bmcu.endpoints[self.destination]
+        if self.bmcu._durable_tail_route(device, channel) is not None:
+            raise gcmd.error(
+                'A detached filament tail requires separate recovery.'
+            )
+        self.bmcu._lock(
+            device, destination, 'ENDER PRINT RECOVERY', channel=channel
+        )
+        try:
+            previous = copy.deepcopy(device.refresh())
+            if (
+                self.sensor(destination)
+                or any(
+                    int(value) != protocol.MOTION_IDLE
+                    for value in previous['motion']
+                )
+                or any(int(value) != 0 for value in previous['motor_pwm'])
+                or any(
+                    self.bmcu._route_state(device, ch) != protocol.ROUTE_EMPTY
+                    for ch in range(4)
+                    if ch != channel
+                )
+            ):
+                raise RuntimeError(
+                    'The shared path is not confirmed clear and idle.'
+                )
+            route = self.bmcu._route_key(device, channel)
+            self.bmcu._uncertain_routes.add(route)
+            device.mark_unloaded(channel)
+            current = copy.deepcopy(device.refresh())
+            if (
+                self.bmcu._route_states_from_status(current)[channel]
+                != protocol.ROUTE_EMPTY
+            ):
+                raise RuntimeError('The BMCU did not confirm an empty route.')
+            self.bmcu.loaded_tools.pop(route, None)
+            self.bmcu.active_tool = -1
+            self.bmcu._unmark_print_route(device, channel)
+            self.bmcu._save_runtime()
+            self.bmcu.device_status_changed(device, previous, current)
+            self.bmcu._uncertain_routes.discard(route)
+            gcmd.respond_info(
+                'Channel %d route confirmed clear. Print mapping preserved; '
+                'RESUME will finish the pending tool change.' % (channel + 1)
+            )
+        finally:
+            self.bmcu._unlock(device, destination)
+
+    def resume_print(self, previous):
+        def execute(gcmd):
+            pending = getattr(self, 'pending_tool_change', None)
+            if pending is None:
+                return previous(gcmd)
+            self.validate_print_recovery()
+            self.recovering_tool_change = True
+            try:
+                self.heat_manual_filament()
+                self.gcode.run_script_from_command(
+                    'BMCU_TROCAR_ENDER TOOL=%d PURGAR_SE_CARREGADO=1'
+                    % pending['tool']
+                )
+                device, channel, destination = self.bmcu._resolve_tool(
+                    pending['tool']
+                )
+                device.refresh()
+                if (
+                    self.bmcu._route_state(device, channel)
+                    != protocol.ROUTE_LOADED
+                    or not self.sensor(destination)
+                    or self.bmcu.get_status(self.reactor.monotonic()).get(
+                        'loaded_tool'
+                    )
+                    != pending['tool']
+                ):
+                    raise RuntimeError(
+                        'The pending filament was not confirmed.'
+                    )
+                self.execute('M109 S%.3f' % pending['nozzle_target'])
+            except Exception as error:
+                pending['error'] = str(error)
+                self.bmcu.devices_by_name[self.device].stop_all()
+                raise
+            finally:
+                self.recovering_tool_change = False
+            move = self.printer.lookup_object('gcode_move')
+            move.saved_states['PAUSE_STATE'] = copy.deepcopy(pending['state'])
+            result = previous(gcmd)
+            self.pending_tool_change = None
+            return result
+
+        return execute
 
     def manual_context(self):
         if self.printer.lookup_object('print_stats').get_status(
@@ -268,6 +520,9 @@ class EnderIntegration:
     def check_manual_operation(self):
         if self.printer.is_shutdown():
             raise RuntimeError('The printer is shut down.')
+        if getattr(self, 'recovering_tool_change', False):
+            self.validate_print_recovery()
+            return
         display = self.printer.lookup_object('e3v3se_display', None)
         session = getattr(display, 'bmcu_session', None)
         if session and session.get('cancelled'):
@@ -984,6 +1239,12 @@ class EnderIntegration:
                     )
 
     def change_tool(self, gcmd):
+        if getattr(
+            self, 'pending_tool_change', None
+        ) is not None and not getattr(self, 'recovering_tool_change', False):
+            raise gcmd.error(
+                'A tool change is pending; use RESUME to recover it.'
+            )
         tool = gcmd.get_int('TOOL', minval=1, maxval=4)
         purge = gcmd.get_int('PURGAR_SE_CARREGADO', 0, minval=0, maxval=1)
         head = self.printer.lookup_object('toolhead').get_status(
@@ -991,11 +1252,10 @@ class EnderIntegration:
         )
         if not all(axis in head['homed_axes'] for axis in 'xyz'):
             raise gcmd.error('Run G28 before changing filament.')
-        if (
-            not self.printer.lookup_object('extruder')
-            .get_status(self.reactor.monotonic())
-            .get('can_extrude')
-        ):
+        extruder_status = self.printer.lookup_object('extruder').get_status(
+            self.reactor.monotonic()
+        )
+        if not extruder_status.get('can_extrude'):
             raise gcmd.error('Heat the nozzle before changing filament.')
         status = self.printer.lookup_object('gcode_move').get_status(
             self.reactor.monotonic()
@@ -1011,9 +1271,7 @@ class EnderIntegration:
                 'BMCU_TOOL_CHANGE TOOL=%d' % tool
             )
             if purge and current == tool:
-                device = self.bmcu.devices_by_name[self.device]
-                channel = tool - 1
-                destination = self.bmcu._endpoint_for_channel(device, channel)
+                device, channel, destination = self.bmcu._resolve_tool(tool)
                 device.refresh()
                 self.position_head()
                 self.execute('M83\nM220 S100\nM221 S100')
@@ -1028,6 +1286,11 @@ class EnderIntegration:
                 % tuple(position[:3])
             )
             success = True
+        except Exception as error:
+            if not self.hold_failed_tool_change(
+                gcmd, tool, error, extruder_status.get('target', 230.0)
+            ):
+                raise
         finally:
             if not success:
                 try:

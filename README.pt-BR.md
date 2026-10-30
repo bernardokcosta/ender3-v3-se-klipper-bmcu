@@ -68,6 +68,11 @@ acompanha o buffer. É necessário inspecionar as pontas e validar as recargas.
 Consulte o [perfil e teste de quatro cores](docs/Ender3_V3_SE_Tip_Forming.md),
 documentado em inglês. Os valores iniciais ainda exigem validação física.
 
+A integração também evita reutilizar resultados antigos de operações após
+reiniciar o host e preserva a impressão ao pausar uma troca de filamento que
+falhou. Consulte a [recuperação de operações e impressão](docs/Ender3_V3_SE_Print_Recovery.md)
+para confirmar um caminho desobstruído e retomar a troca pendente.
+
 Na seção `[e3v3se_display]`, use `language: pt_BR` para a tela em português.
 O código-fonte e a documentação mantida pelo projeto ficam em inglês. Nomes
 antigos de comandos, opções de configuração e campos de backup em português

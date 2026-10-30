@@ -30,6 +30,7 @@ PANEL_SETTINGS = (
 TIP_SETTINGS = (
     ROOT / 'config/ender3-v3-se-validada/bmcu-formacao-ponta.cfg'
 ).read_bytes()
+TRANSPORT_GUARD = (ROOT / 'integrations/bmcu/ender_transport.py').read_bytes()
 
 
 def query_object(name):
@@ -257,6 +258,36 @@ def patch_pre_capture(text):
     return transform_method(text, 'BMCUManager', 'load_channel', change)
 
 
+def patch_transport(text):
+    original_import = 'from bmcu_core import protocol, transport'
+    guarded_import = (
+        original_import
+        + '\nfrom bmcu_core.ender_transport import EnderTransportGuard'
+    )
+    original_class = '\ndef parse_args():'
+    guarded_class = (
+        '\nclass EnderTransportDaemon(EnderTransportGuard, TransportDaemon):'
+        '\n    pass\n\n\ndef parse_args():'
+    )
+    for original, updated in (
+        (original_import, guarded_import),
+        (original_class, guarded_class),
+        (
+            'daemon = TransportDaemon(args)',
+            'daemon = EnderTransportDaemon(args)',
+        ),
+    ):
+        if updated in text:
+            continue
+        if text.count(original) != 1:
+            raise RuntimeError(
+                'The BMCU transport changed; review before installing.'
+            )
+        text = text.replace(original, updated, 1)
+    compile(text, 'bmcu_transportd.py', 'exec')
+    return text
+
+
 def prepare(home, purge_mm=None, pullback_speed=None):
     configurations = home / 'printer_data/config'
     extras = home / 'klipper/klippy/extras'
@@ -265,8 +296,9 @@ def prepare(home, purge_mm=None, pullback_speed=None):
     contracts = extras / 'bmcu_core/endpoints.py'
     manager = extras / 'bmcu_core/manager.py'
     module = extras / 'bmcu_integracao_ender.py'
+    daemon = configurations / 'bmcu/runtime/scripts/bmcu_transportd.py'
     destination = configurations / 'bmcu-multicor-ender.cfg'
-    for path in (root, contracts, manager):
+    for path in (root, contracts, manager, daemon):
         if not path.is_file():
             raise RuntimeError('File not found: ' + str(path))
     content = root.read_text()
@@ -327,6 +359,8 @@ def prepare(home, purge_mm=None, pullback_speed=None):
         contracts.resolve(): patch_contract(contracts.read_text()).encode(),
         manager.resolve(): patch_pre_capture(manager.read_text()).encode(),
         module.resolve(): MODULE.encode(),
+        (extras / 'bmcu_core/ender_transport.py').resolve(): TRANSPORT_GUARD,
+        daemon.resolve(): patch_transport(daemon.read_text()).encode(),
         (configurations / 'bmcu-controles.cfg').resolve(): CONTROLS,
         settings.resolve(): (
             settings.read_bytes() if settings.is_file() else PANEL_SETTINGS
