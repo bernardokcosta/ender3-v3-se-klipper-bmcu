@@ -82,6 +82,16 @@ o mapa determina o canal físico. Fora desse contexto, os comandos nativos
 mantêm o significado original, incluindo a entrada externa de `T0`.
 Não é necessário instalar scripts de pós-processamento no computador.
 
+## Peças para impressão
+
+| Peça | Modelo e download |
+| --- | --- |
+| Suporte da BMCU para Creality Ender 3 V3 SE | [MakerWorld](https://makerworld.com/pt/models/3516373-bmcu-mount-for-creality-ender-3-v3-se) |
+| Hub de quatro entradas PTFE para uma saída, com sensor de chegada | [Printables](https://www.printables.com/model/1320106-hub-filament-have-sensor-for-pico-mmu-for-ender-3) |
+
+Baixe os arquivos nas respectivas páginas dos modelos. Eles não são duplicados
+neste repositório; cada modelo mantém sua própria licença e os créditos do autor.
+
 ## Backups e privacidade
 
 Snapshots de máquinas, arquivos de ambiente, estado de execução, identificadores

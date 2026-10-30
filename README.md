@@ -87,6 +87,16 @@ With a committed BMCU print map, `T0` through `T3` select logical tools 1 throug
 retain their original meaning, including external feeding through `T0`.
 No computer-side post-processing script is required.
 
+## Printable hardware
+
+| Part | Model and download |
+| --- | --- |
+| BMCU mount for Creality Ender 3 V3 SE | [MakerWorld](https://makerworld.com/pt/models/3516373-bmcu-mount-for-creality-ender-3-v3-se) |
+| Four-to-one PTFE filament hub with entry sensor | [Printables](https://www.printables.com/model/1320106-hub-filament-have-sensor-for-pico-mmu-for-ender-3) |
+
+Download the model files from their respective pages. They are not duplicated
+in this repository; each model retains its own license and creator attribution.
+
 ## Backups and privacy
 
 Machine snapshots, service environments, runtime state, device IDs and personal
