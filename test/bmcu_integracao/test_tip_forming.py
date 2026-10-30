@@ -74,6 +74,88 @@ class TipBench(TestBench):
 
 
 class TipFormingTests(unittest.TestCase):
+    def test_unload_reuses_only_status_read_after_previous_completed_step(
+        self,
+    ):
+        b = TipBench()
+        refresh = b.device.refresh
+        execute = b.gcode.run_script_from_command
+        snapshots = []
+
+        def observe():
+            refresh()
+            snapshots.append(b.e)
+
+        def checked(text):
+            if text.startswith('G1 E'):
+                self.assertTrue(snapshots)
+                self.assertAlmostEqual(b.e, snapshots[-1])
+            return execute(text)
+
+        b.device.refresh = observe
+        b.gcode.run_script_from_command = checked
+        b.unload()
+        self.assertLess(len(snapshots), len(b.moves) * 2)
+        self.assertEqual(146, len(b.moves))
+        self.assertAlmostEqual(-66.0, b.e)
+
+    def test_parking_timing_is_reported_after_encoder_verification(self):
+        b = TipBench()
+        b.unload()
+        self.assertEqual(
+            'awaiting_parking', b.obj.last_unload_timing['result']
+        )
+
+        def parked(device, channel, *args, **kwargs):
+            b.device.status['meters'][channel] -= 0.055
+            b.timeout += 2.0
+            return {'ok': True}
+
+        b.obj.original_wait_pullback = parked
+        b.obj.wait_pullback(b.device, 3)
+        timing = b.obj.last_unload_timing
+        self.assertEqual('complete', timing['result'])
+        self.assertGreaterEqual(timing['parking_seconds'], 2.0)
+        self.assertGreater(timing['tip_seconds'], 0.0)
+        self.assertGreater(timing['release_seconds'], 0.0)
+        self.assertGreaterEqual(
+            timing['total_seconds'],
+            sum(
+                timing[key]
+                for key in (
+                    'position_seconds',
+                    'tip_seconds',
+                    'release_seconds',
+                    'parking_seconds',
+                )
+            ),
+        )
+
+    def test_failed_parking_does_not_report_timing_as_complete(self):
+        b = TipBench()
+        b.unload()
+
+        def failed(*args, **kwargs):
+            raise RuntimeError('parking failed')
+
+        b.obj.original_wait_pullback = failed
+        with self.assertRaisesRegex(RuntimeError, 'parking failed'):
+            b.obj.wait_pullback(b.device, 3)
+        self.assertEqual('parking_failed', b.obj.last_unload_timing['result'])
+
+    def test_missing_final_parking_readback_records_failed_timing(self):
+        b = TipBench()
+        b.unload()
+        b.obj.original_wait_pullback = lambda *args, **kwargs: {'ok': True}
+
+        def unavailable():
+            raise RuntimeError('no final status')
+
+        b.device.refresh = unavailable
+        with self.assertRaisesRegex(RuntimeError, 'no final status'):
+            b.obj.wait_pullback(b.device, 3)
+        self.assertEqual('parking_failed', b.obj.last_unload_timing['result'])
+
     def test_compressed_buffer_aborts_without_further_extrusion(self):
         b = TipBench()
         b.device.status['buffer_pct'][3] = 80
