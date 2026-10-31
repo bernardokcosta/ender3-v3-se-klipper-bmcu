@@ -15,9 +15,9 @@ mode used during printing, instead of repeatedly entering pre-capture push mode.
 2. Move to the configured purge position and save extrusion state.
 3. Optionally wait for a dedicated tip-forming temperature; zero preserves the
    current temperature. Keep the original heater target for the next load.
-4. Temporarily disable pressure advance. Use withdrawal assistance
-   (`MOTION_BEFORE_PULL_BACK`) for retractions and buffer-follow assistance
-   (`MOTION_ON_USE`) for forward cooling moves.
+4. Temporarily disable pressure advance. Keep withdrawal assistance
+   (`MOTION_BEFORE_PULL_BACK`) active for both retractions and forward cooling
+   moves, preserving the same buffer target throughout tip forming.
 5. Retract 15 mm at 20 mm/s, then approach a 35–45 mm cooling region at
    progressively lower speeds.
 6. Perform four 10 mm cooling cycles at progressively increasing speeds.
@@ -51,10 +51,25 @@ PTFE disconnection during withdrawal exposed the limitation of that sequence:
 the final-search checks did not bound uncollected filament during forming.
 
 All forming and final-search extrusion moves now run in monitored increments
-of at most 1 mm by default. Each retraction selects withdrawal assistance before
-moving the extruder. Forward cooling moves select FOLLOW. Both encoder and
+of at most 1 mm by default. Both negative and positive forming moves use the
+configured withdrawal-assistance target. Both encoder and
 entry sensor are checked between increments; UART requests remain outside
 Klipper's movement critical sections.
+
+The previous direction-based mode selection switched to printing FOLLOW for
+positive cooling strokes. The printing and withdrawal controllers have different
+buffer targets, so changing controllers can refill the buffer during a small
+forward stroke and trip the cumulative encoder allowance. An observed failure
+occurred at net -44 mm on the first positive stroke, with 2.63 mm mismatch,
+printing mode 3, buffer 53% and zero motor PWM at the reported snapshot.
+
+In BMCU-Klipper v1.0.6, the withdrawal controller is bidirectional: it supplies
+filament below its configured buffer target and retracts above it. Keeping
+`MOTION_BEFORE_PULL_BACK` throughout cooling avoids the printing-target refill.
+The 2 mm allowance is unchanged and still stops unexpected excess feeder motion
+in either extrusion direction. This removes the identified mode-transition
+problem; physical tip quality and repeated reloads still need verification.
+Normal capture, purge and printing continue using their existing modes.
 
 One encoder reference is kept across the entire unload, including forward and
 backward cooling strokes. Before each retraction increment, the integration

@@ -74,6 +74,25 @@ class TipBench(TestBench):
 
 
 class TipFormingTests(unittest.TestCase):
+    def test_cooling_does_not_refill_to_the_printing_buffer_target(self):
+        b = TipBench()
+        execute = b.execute
+
+        def printing_target_refill(text):
+            execute(text)
+            if (
+                text.startswith('G1 E1.')
+                and b.device.status['motion'][3] == protocol.MOTION_ON_USE
+            ):
+                b.device.status['meters'][3] += 0.00263
+                b.device.status['buffer_pct'][3] = 53
+                b.device.status['motor_pwm'][3] = 0
+
+        b.gcode.run_script_from_command = printing_target_refill
+        b.unload()
+        self.assertAlmostEqual(-66.0, b.e)
+        self.assertEqual([(3, 55.0)], b.policies)
+
     def test_unload_reuses_only_status_read_after_previous_completed_step(
         self,
     ):
@@ -231,12 +250,7 @@ class TipFormingTests(unittest.TestCase):
         self.assertTrue(all(abs(mm) <= 1 for mm, mode in b.moves))
         self.assertTrue(
             all(
-                mode
-                == (
-                    protocol.MOTION_BEFORE_PULL_BACK
-                    if mm < 0
-                    else protocol.MOTION_ON_USE
-                )
+                mode == protocol.MOTION_BEFORE_PULL_BACK
                 for mm, mode in b.moves
             )
         )
@@ -358,10 +372,12 @@ class TipFormingTests(unittest.TestCase):
             before = b.device.status['meters'][3]
             execute(text)
             if text.startswith('G1 E1.'):
-                b.device.status['meters'][3] = before + 0.004
+                b.device.status['meters'][3] = before + 0.00363
 
         b.gcode.run_script_from_command = oversupply
-        with self.assertRaisesRegex(RuntimeError, 'mismatch exceeded'):
+        with self.assertRaisesRegex(
+            RuntimeError, 'encoder lag 2.63 mm.*motion 4'
+        ):
             b.unload()
         self.assertAlmostEqual(b.e, -44)
         self.assertEqual([], b.policies)
