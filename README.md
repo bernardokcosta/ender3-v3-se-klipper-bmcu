@@ -98,6 +98,7 @@ No computer-side post-processing script is required.
 | --- | --- |
 | BMCU mount for Creality Ender 3 V3 SE | [MakerWorld](https://makerworld.com/pt/models/3516373-bmcu-mount-for-creality-ender-3-v3-se) |
 | Four-to-one PTFE filament hub with entry sensor | [Printables](https://www.printables.com/model/1320106-hub-filament-have-sensor-for-pico-mmu-for-ender-3) |
+| Minimal X endstop and purge chute/wiper | [Printables](https://www.printables.com/model/1600776-minimal-x-endstop-and-purge-chutewiper-for-ender-3/files) |
 
 Download the model files from their respective pages. They are not duplicated
 in this repository; each model retains its own license and creator attribution.

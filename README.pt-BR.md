@@ -93,6 +93,7 @@ Não é necessário instalar scripts de pós-processamento no computador.
 | --- | --- |
 | Suporte da BMCU para Creality Ender 3 V3 SE | [MakerWorld](https://makerworld.com/pt/models/3516373-bmcu-mount-for-creality-ender-3-v3-se) |
 | Hub de quatro entradas PTFE para uma saída, com sensor de chegada | [Printables](https://www.printables.com/model/1320106-hub-filament-have-sensor-for-pico-mmu-for-ender-3) |
+| Fim de curso X compacto e calha de purga com limpador | [Printables](https://www.printables.com/model/1600776-minimal-x-endstop-and-purge-chutewiper-for-ender-3/files) |
 
 Baixe os arquivos nas respectivas páginas dos modelos. Eles não são duplicados
 neste repositório; cada modelo mantém sua própria licença e os créditos do autor.
