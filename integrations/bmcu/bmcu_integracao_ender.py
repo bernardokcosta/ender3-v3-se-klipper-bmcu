@@ -796,11 +796,7 @@ class EnderIntegration:
         speed,
         allow_clear=False,
     ):
-        mode = (
-            protocol.MOTION_BEFORE_PULL_BACK
-            if mm < 0
-            else protocol.MOTION_ON_USE
-        )
+        mode = protocol.MOTION_BEFORE_PULL_BACK
         device.set_motion(channel, mode)
         extruder = self.printer.lookup_object('extruder')
         limit = min(
