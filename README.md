@@ -100,6 +100,7 @@ No computer-side post-processing script is required.
 | Four-to-one PTFE filament hub with entry sensor | [Printables](https://www.printables.com/model/1320106-hub-filament-have-sensor-for-pico-mmu-for-ender-3) |
 | Minimal X endstop and purge chute/wiper | [Printables](https://www.printables.com/model/1600776-minimal-x-endstop-and-purge-chutewiper-for-ender-3/files) |
 | Left-side purge waste bucket | [Printables](https://www.printables.com/model/899282-ender-3-v3-se-left-bin-bucket-but-for-people-with/files) |
+| Filament spool holder for four spools | [MakerWorld](https://makerworld.com/pt/models/2671446-filament-spool-holder-for-4-spools#profileId-3406834) |
 
 Download the model files from their respective pages. They are not duplicated
 in this repository; each model retains its own license and creator attribution.
