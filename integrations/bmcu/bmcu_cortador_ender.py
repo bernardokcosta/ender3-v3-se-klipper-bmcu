@@ -290,5 +290,6 @@ class CortadorEnder:
         finally:
             self.integracao.manual_operation = None
         gcmd.respond_info(
-            'Teste concluido; confira o corte e o recolhimento antes de calibrado=1.'
+            'Teste concluido; confira o corte e o recolhimento '
+            'antes de calibrado=1.'
         )
