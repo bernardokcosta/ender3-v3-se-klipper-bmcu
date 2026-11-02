@@ -568,7 +568,19 @@ class IntegrationTests(unittest.TestCase):
             daemon = config / 'bmcu/runtime/scripts/bmcu_transportd.py'
             daemon.parent.mkdir(parents=True)
             daemon.write_text((BASE / 'transport_original.txt').read_text())
+            impressao = config / 'impressao.cfg'
+            inicio_antigo = (
+                (ROOT / 'config/ender3-v3-se-validada/impressao.cfg')
+                .read_text()
+                .replace('  BMCU_ENDER_POSICIONAR_PURGA\n', '')
+                .replace(
+                    '  M109 S{nozzle_temp}\n  G1 X5 Y20 F6000\n',
+                    '  G1 X5 Y20 F6000\n  M109 S{nozzle_temp}\n',
+                )
+            )
+            impressao.write_text(inicio_antigo)
             changes = installer.prepare(home)
+            self.assertIn(b'BMCU_ENDER_POSICIONAR_PURGA', changes[impressao])
             root = changes[(config / 'printer.cfg').resolve()].decode()
             self.assertEqual(root[root.index('#*# <') :], saved)
             for p, data in changes.items():
