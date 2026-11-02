@@ -39,6 +39,10 @@ protocol = import_module(
 protocol.ROUTE_EMPTY = 0
 protocol.ROUTE_LOADED = 1
 protocol.ROUTE_UNCERTAIN = 2
+import_module(
+    'integration_test.bmcu_cortador_ender',
+    ROOT / 'integrations/bmcu/bmcu_cortador_ender.py',
+)
 module = import_module(
     'integration_test.bmcu_integracao_ender',
     ROOT / 'integrations/bmcu/bmcu_integracao_ender.py',
@@ -179,6 +183,7 @@ class TestBench:
             temporary_pullbacks={},
         )
         self.obj.__dict__.update(values)
+        self.obj.cortador = module.CortadorEnder(self.obj)
         self.obj.measurement = types.SimpleNamespace(
             _capturar_extrusora_primeiro=self.capture
         )
@@ -605,6 +610,56 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(
                 root.count('[include bmcu-formacao-ponta.cfg]'), 1
             )
+            cutter = config / 'bmcu-cortador.cfg'
+            custom_cutter = cutter.read_bytes().replace(
+                b'variable_corte_f: 300.0', b'variable_corte_f: 240.0'
+            )
+            cutter.write_bytes(custom_cutter)
+            self.assertEqual(installer.prepare(home)[cutter], custom_cutter)
+            self.assertEqual(root.count('[include bmcu-cortador.cfg]'), 1)
+            with_servo = installer.prepare(
+                home, pino_servo_cortador='host:gpiochip1/gpio73'
+            )
+            servo = config / 'bmcu-cortador-servo.cfg'
+            self.assertIn(b'pin: host:gpiochip1/gpio73', with_servo[servo])
+            self.assertNotIn(b'initial_angle', with_servo[servo])
+            for path, data in with_servo.items():
+                path.write_bytes(data)
+            self.assertEqual(
+                with_servo,
+                installer.prepare(
+                    home, pino_servo_cortador='host:gpiochip1/gpio73'
+                ),
+            )
+            adjusted_servo = servo.read_bytes().replace(b'0.001', b'0.0011')
+            servo.write_bytes(adjusted_servo)
+            self.assertEqual(
+                adjusted_servo,
+                installer.prepare(
+                    home, pino_servo_cortador='host:gpiochip1/gpio73'
+                )[servo],
+            )
+            for invalid in (
+                'host:gpio73',
+                'mcu:PA0',
+                'host:gpiochip1/gpio73\n[other]',
+                'host:gpiochip1/gpio74',
+            ):
+                with self.assertRaises(ValueError):
+                    installer.prepare(home, pino_servo_cortador=invalid)
+
+    def test_cutter_pin_rejects_sensor_conflicts_and_missing_host_mcu(self):
+        with self.assertRaises(ValueError):
+            installer.validar_pino_cortador('host:gpiochip1/gpio73', {})
+        config = {
+            'mcu host': {},
+            'filament_switch_sensor bmcu_entry': {
+                'switch_pin': '^!host:gpiochip1/gpio73'
+            },
+        }
+        with self.assertRaisesRegex(ValueError, 'reservado'):
+            installer.validar_pino_cortador('host:gpiochip1/gpio73', config)
+        installer.validar_pino_cortador('host:gpiochip1/gpio74', config)
 
     def test_native_capture_starts_extruder_before_feeder(self):
         original = (BASE / 'manager_original.txt').read_text()

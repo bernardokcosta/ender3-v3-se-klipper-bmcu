@@ -1,0 +1,85 @@
+# Optional filament cutter and Orange Pi servo
+
+[Português brasileiro](Ender3_V3_SE_Cortador.pt-BR.md)
+
+The mechanical reference is [matarsaed's Ender 3 V3 SE/KE cutter](https://www.printables.com/model/1243521-filament-cutter-for-ender-3-v3-seke), including its [assembly discussion](https://www.printables.com/model/1243521-filament-cutter-for-ender-3-v3-seke/comments). The gantry servo mount is adapted from [jmillerfo's Filametrix mount](https://www.printables.com/model/1097275-voron-24r2-filametrix-filament-cutter-gantry-servo). Download CAD from the authors; model licenses remain separate from the software license.
+
+The servo positions a gantry stop. The X carriage presses the cutter lever against that stop; the servo does not directly push the blade. This integration is intended for a cut **below the extruder gears**, leaving the severed nozzle-side filament to be pushed out during the next load and purge. An upstream cutter that leaves an ungripped loose tail needs a different transport sequence and is not supported by this profile.
+
+## Wiring the SG90 to Orange Pi Zero 3
+
+Use a positional SG90, not a continuous-rotation model. The original gantry mount targets an MG90S; fitting an SG90 does not establish its durability under repeated contact loads.
+
+| Connection | Destination |
+| --- | --- |
+| Servo signal, usually orange/yellow | Proposed physical header pin **7, PC9** |
+| Servo ground, usually brown/black | Regulated supply ground and Orange Pi **GND**, e.g. physical pin **6** |
+| Servo supply, usually red | Separate regulated **5 V** supply with capacity for servo current peaks |
+
+The GPIO carries the 3.3 V control signal, not motor power. Keep the Orange Pi's supply unchanged, join grounds, and do not backfeed the external supply into the Pi's 5 V header. Never connect the servo to 24 V. Tower Pro reports substantial current peaks; a regulated supply rated for at least 2 A is a conservative starting point for one SG90.
+
+The validated entry switch occupies PC15, physical pin 16. The BMCU uses UART5; do not enable a PWM overlay on its RX/TX pins. PC9 uses the existing Linux MCU's software PWM and does not require changing UART or boot overlays. Check pulse stability with the camera and normal host load; use hardware PWM or a dedicated MCU if this arrangement jitters. Software tests do not verify electrical timing or actual blade travel.
+
+Before wiring, run on the Orange Pi:
+
+```sh
+gpiodetect
+gpioinfo
+```
+
+Confirm which gpiochip contains PC9 and that its line is unused. In the currently validated layout the candidate is `host:gpiochip1/gpio73`, but gpiochip numbering depends on the kernel. The physical pin number is not the GPIO offset. Cross-check [the board pinout](http://www.orangepi.org/orangepiwiki/index.php/Orange_Pi_Zero_3#26_Pin_Interface_Pin_Description), the [GPIO library mapping](https://github.com/rm-hull/OPi.GPIO/issues/79) and [Klipper's Linux MCU guidance](https://www.klipper3d.org/RPi_microcontroller.html).
+
+## Installation and calibration
+
+Cancel any print, manually recover a jam, and confirm all routes empty or parked first. Back up the configuration, update this fork and run the regular installer. To add the servo after confirming the proposed GPIO is free:
+
+```sh
+cd "$HOME/klipper" &&
+git pull --ff-only origin master &&
+sudo python3 scripts/ender3-v3-se/install_multicolor.py \
+  --cutter-servo-pin host:gpiochip1/gpio73
+```
+
+Substitute the actual GPIO mapping if different. This is a host integration change; it does not require a new printer `.bin`. The installer backs up affected files and rolls back on startup failure. It preserves existing cutter angles, positions, pulse widths, purge length, PID, mesh and Z offset. A different existing servo pin must be reviewed manually rather than overwritten. Running without the flag installs the optional profile and reset macro without reserving a servo pin.
+
+The new `bmcu-cortador.cfg` ships with `habilitado=0`, `calibrado=0` and invalid coordinate sentinels. No cutting or faster cutter profile starts by default. `bmcu-cortador-servo.cfg` has no startup angle, so installing the file does not automatically move the servo.
+
+1. With the carriage physically clear of the stop, use `CORTADOR_SERVO ANGULO=<safe_angle> CONFIRMAR=1` to find safe retracted and deployed angles. Start with the horn unloaded if its direction is unknown. Standard pulse limits are only a starting point, not an SG90 clone calibration.
+2. Set `variable_angulo_recolhido`, `variable_angulo_acionado`, `variable_x_aproximacao`, `variable_x_corte` and `variable_y_corte` in `bmcu-cortador.cfg`. Measure the actual approach and full cutting stroke on this assembly. Purge coordinates are not cutter coordinates. Keep every coordinate within the configured travel; do not expand machine limits to hide a collision. Set Z clearance for the installed bucket, camera, fan and hub.
+3. Restart Klipper, command the calibrated retracted angle, then home. With the hotend/shared path empty and channels parked, run `TESTAR_CORTADOR CONFIRMAR=1`. This performs a dry mechanical cycle without heating or extruding; inspect full lever travel, spring return and clearance. Failure after deploying the stop leaves its position uncertain and blocks further automatic use.
+4. Only after the dry cycle works, set both `variable_calibrado: 1` and `variable_habilitado: 1`, then restart. After **each restart**, physically check clearance and command the calibrated retracted angle using `CORTADOR_SERVO ... CONFIRMAR=1` before `G28` or a filament operation. Homing is blocked while an enabled cutter has not been confirmed retracted.
+5. Test a heated load/unload, inspect the cut end and remaining hotend filament, then repeat a short four-color test. Verify nozzle flow during every purge. There is no blade-position, cut-success or post-gears capture sensor in this setup; command completion is not proof of a successful physical cut or unattended four-color reliability.
+
+If the cutter is enabled but uncalibrated, missing its servo, outside travel limits or left uncertain, operations stop rather than falling back to hot tip forming. With the optional profile disabled, the previous tip-forming workflow is preserved.
+
+## Faster exchanges
+
+With a calibrated, enabled cutter, the integration replaces separation/cooling moves with the mechanical cutting cycle. It retains switch clearance, encoder feedback, compression limits and the confirmed 55 mm parking withdrawal; it does not allow a new filament into an occupied or uncertain route.
+
+The starting cutter profile uses separate rates, all in mm/min:
+
+| Phase | Starting value |
+| --- | --- |
+| Extruder withdrawal after cutting | 600 |
+| Feed towards the nozzle after capture | 240 |
+| Purge | 180 |
+
+Capture distance/speed and purge/parking distances remain those already configured. Verify the BMCU can sustain the withdrawal rate; the validated BMCU pull speed is 10 mm/s. Reduce rates if the extruder skips or nozzle flow is insufficient. Never increase the encoder lag allowance to conceal a feeder that is not following.
+
+`variable_posicionamento_paralelo: 1` allows carriage positioning during the native arrival search **only after all routes are confirmed empty and the entry sensor is clear**. The native BMCU remains responsible for stopping at the entry sensor. Extruder capture waits for queued carriage moves to finish. There is no background loading of a second filament into the shared path, and no native route/tail checks are bypassed.
+
+Compare `unload_timing` and `ultimo_corte` in `bmcu_integracao_ender` status. The host tests validate sequencing and interlocks; the final timings require measurement on the printer.
+
+## Reset after manual withdrawal
+
+After canceling the print and physically clearing the hotend/shared path:
+
+```gcode
+RESET_BMCU CONFIRMAR=1
+```
+
+The command stops BMCU motion and uses native route confirmation for all four channels: `PARKED` if its input still detects filament, `EMPTY` otherwise. It requires a clear entry sensor and no active/paused print or BMCU operation. Only after all confirmations succeed does it clear the print session and pending tool change. A partial failure is reported, not presented as a completed reset.
+
+This does not physically unload, heat, extrude, clear a clog, erase calibration, reset the servo's uncertain position or replace paused-print recovery. For a paused tool-change failure, use the existing [recovery procedure](Ender3_V3_SE_Print_Recovery.md). An uncertain cutter must first be physically freed; `CORTADOR_SERVO` permits retraction during that pending paused recovery, with explicit confirmation and no BMCU operation active.
+
+Sources: [Klipper servo reference](https://www.klipper3d.org/Config_Reference.html#servo), [Tower Pro SG90](https://towerpro.com.tw/product/sg90-7/) and the mechanical/GPIO references above.

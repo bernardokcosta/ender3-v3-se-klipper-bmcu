@@ -86,6 +86,9 @@ def prepare(home, snapshot):
     changes[extras / 'bmcu_integracao_ender.py'] = (
         ROOT / 'integrations/bmcu/bmcu_integracao_ender.py'
     ).read_bytes()
+    changes[extras / 'bmcu_cortador_ender.py'] = (
+        ROOT / 'integrations/bmcu/bmcu_cortador_ender.py'
+    ).read_bytes()
     changes[extras / 'bmcu_medicao.py'] = (
         ROOT / 'integrations/bmcu/bmcu_medicao.py'
     ).read_bytes()

@@ -79,9 +79,16 @@ See [filament operation and print recovery](docs/Ender3_V3_SE_Print_Recovery.md)
 for guarded path confirmation and resuming the pending change.
 
 Set `language: en` or `language: pt_BR` in `[e3v3se_display]` for the screen UI.
-Source code and maintained project documentation use English. Legacy Portuguese
-G-code command names, configuration keys and backup field names are retained
-for compatibility with installed printers.
+Maintained documentation is available in English and Brazilian Portuguese.
+Portuguese G-code commands, configuration keys and integration identifiers are
+retained for compatibility with installed printers.
+
+The optional [filament cutter with an Orange Pi servo](docs/Ender3_V3_SE_Cutter.md)
+replaces thermal tip forming after physical calibration. Its separate feed,
+purge and withdrawal rates and guarded carriage/arrival overlap target shorter
+exchanges. It ships disabled and requires measured cutting coordinates and
+confirmed GPIO wiring. The guide also documents `RESET_BMCU CONFIRMAR=1` for
+reconciling all four channels after manually clearing the hotend and shared path.
 
 ## OrcaSlicer
 
@@ -101,6 +108,7 @@ No computer-side post-processing script is required.
 | Minimal X endstop and purge chute/wiper | [Printables](https://www.printables.com/model/1600776-minimal-x-endstop-and-purge-chutewiper-for-ender-3/files) |
 | Left-side purge waste bucket | [Printables](https://www.printables.com/model/899282-ender-3-v3-se-left-bin-bucket-but-for-people-with/files) |
 | Filament spool holder for four spools | [MakerWorld](https://makerworld.com/pt/models/2671446-filament-spool-holder-for-4-spools#profileId-3406834) |
+| Optional filament cutter for Ender 3 V3 SE/KE | [Printables](https://www.printables.com/model/1243521-filament-cutter-for-ender-3-v3-seke) · [Integration and calibration](docs/Ender3_V3_SE_Cutter.md) |
 
 Download the model files from their respective pages. They are not duplicated
 in this repository; each model retains its own license and creator attribution.
@@ -132,6 +140,7 @@ four-color printing require their own physical acceptance tests.
 - [Installation, flashing and commissioning](docs/Ender3_V3_SE.md)
 - [Switch-based BMCU integration, upgrade and private backups](docs/Ender3_V3_SE_Configuracao_Validada.md)
 - [BMCU setup, wiring and calibration concepts](docs/Ender3_V3_SE_BMCU.md)
+- [Optional cutter, Orange Pi servo and manual reset](docs/Ender3_V3_SE_Cutter.md)
 - [OrcaSlicer configuration](profiles/orca/ender3-v3-se-bmcu/README.md)
 - [Display architecture](docs/E3V3SE_Display.md)
 - [Port analysis and provenance](docs/E3V3SE_Port_Analysis.md)

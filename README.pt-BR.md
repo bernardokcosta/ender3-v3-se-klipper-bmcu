@@ -74,9 +74,17 @@ falhou. Consulte a [recuperação de operações e impressão](docs/Ender3_V3_SE
 para confirmar um caminho desobstruído e retomar a troca pendente.
 
 Na seção `[e3v3se_display]`, use `language: pt_BR` para a tela em português.
-O código-fonte e a documentação mantida pelo projeto ficam em inglês. Nomes
-antigos de comandos, opções de configuração e campos de backup em português
-são mantidos para compatibilidade com instalações existentes.
+A documentação mantida está disponível em inglês e português brasileiro.
+Comandos G-code, opções de configuração e identificadores da integração em
+português são mantidos para compatibilidade com instalações existentes.
+
+O [cortador opcional com servo na Orange Pi](docs/Ender3_V3_SE_Cortador.pt-BR.md)
+substitui a formação térmica da ponta após a calibração física. Velocidades
+separadas de avanço, purga e retirada e a sobreposição protegida do movimento
+do cabeçote com a chegada do filamento buscam reduzir o tempo das trocas.
+Ele vem desabilitado e exige medir as coordenadas de corte e confirmar o GPIO.
+O guia também explica `RESET_BMCU CONFIRMAR=1`, para reconciliar os quatro
+canais depois de desobstruir manualmente o hotend e o caminho compartilhado.
 
 ## OrcaSlicer
 
@@ -96,6 +104,7 @@ Não é necessário instalar scripts de pós-processamento no computador.
 | Fim de curso X compacto e calha de purga com limpador | [Printables](https://www.printables.com/model/1600776-minimal-x-endstop-and-purge-chutewiper-for-ender-3/files) |
 | Reservatório lateral esquerdo para resíduos de purga | [Printables](https://www.printables.com/model/899282-ender-3-v3-se-left-bin-bucket-but-for-people-with/files) |
 | Suporte para quatro carretéis de filamento | [MakerWorld](https://makerworld.com/pt/models/2671446-filament-spool-holder-for-4-spools#profileId-3406834) |
+| Cortador opcional de filamento para Ender 3 V3 SE/KE | [Printables](https://www.printables.com/model/1243521-filament-cutter-for-ender-3-v3-seke) · [Integração e calibração](docs/Ender3_V3_SE_Cortador.pt-BR.md) |
 
 Baixe os arquivos nas respectivas páginas dos modelos. Eles não são duplicados
 neste repositório; cada modelo mantém sua própria licença e os créditos do autor.
