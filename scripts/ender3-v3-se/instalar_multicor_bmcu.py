@@ -31,6 +31,10 @@ TIP_SETTINGS = (
     ROOT / 'config/ender3-v3-se-validada/bmcu-formacao-ponta.cfg'
 ).read_bytes()
 TRANSPORT_GUARD = (ROOT / 'integrations/bmcu/ender_transport.py').read_bytes()
+CORTADOR = (ROOT / 'integrations/bmcu/bmcu_cortador_ender.py').read_bytes()
+AJUSTES_CORTADOR = (
+    ROOT / 'config/ender3-v3-se-validada/bmcu-cortador.cfg'
+).read_bytes()
 
 
 def query_object(name):
@@ -288,7 +292,44 @@ def patch_transport(text):
     return text
 
 
-def prepare(home, purge_mm=None, pullback_speed=None):
+def preparar_servo_cortador(caminho, pino):
+    if not re.fullmatch(r'host:gpiochip(?:[0-9]|1[0-5])/gpio[0-9]{1,3}', pino):
+        raise ValueError(
+            'Use um GPIO explicito da MCU host: host:gpiochipN/gpioO.'
+        )
+    if caminho.is_file():
+        conteudo = caminho.read_text()
+        existente = re.search(r'(?m)^\s*pin\s*:\s*(\S+)\s*$', conteudo)
+        if existente is None or existente.group(1) != pino:
+            raise ValueError(
+                'O arquivo do servo ja existe com outro pino; revise-o manualmente.'
+            )
+        return caminho.read_bytes()
+    return (
+        '[servo bmcu_cortador]\n'
+        'pin: %s\n'
+        'maximum_servo_angle: 180\n'
+        'minimum_pulse_width: 0.001\n'
+        'maximum_pulse_width: 0.002\n' % pino
+    ).encode()
+
+
+def validar_pino_cortador(pino, configuracao):
+    if 'mcu host' not in configuracao:
+        raise ValueError('Configure a MCU host antes de instalar o servo.')
+    for secao, valores in configuracao.items():
+        if secao == 'servo bmcu_cortador':
+            continue
+        for chave, valor in valores.items():
+            if 'pin' in chave and str(valor).lstrip('^!~') == pino:
+                raise ValueError(
+                    'O pino do servo ja esta reservado em %s.' % secao
+                )
+
+
+def prepare(
+    home, purge_mm=None, pullback_speed=None, pino_servo_cortador=None
+):
     configurations = home / 'printer_data/config'
     extras = home / 'klipper/klippy/extras'
     root = configurations / 'printer.cfg'
@@ -298,15 +339,25 @@ def prepare(home, purge_mm=None, pullback_speed=None):
     module = extras / 'bmcu_integracao_ender.py'
     daemon = configurations / 'bmcu/runtime/scripts/bmcu_transportd.py'
     destination = configurations / 'bmcu-multicor-ender.cfg'
+    arquivo_servo = configurations / 'bmcu-cortador-servo.cfg'
+    dados_servo = (
+        preparar_servo_cortador(arquivo_servo, pino_servo_cortador)
+        if pino_servo_cortador is not None
+        else None
+    )
     for path in (root, contracts, manager, daemon):
         if not path.is_file():
             raise RuntimeError('File not found: ' + str(path))
     content = root.read_text()
-    for filename in (
+    includes = [
         'bmcu-multicor-ender.cfg',
         'bmcu-controles.cfg',
         'bmcu-formacao-ponta.cfg',
-    ):
+        'bmcu-cortador.cfg',
+    ]
+    if dados_servo is not None or arquivo_servo.is_file():
+        includes.append('bmcu-cortador-servo.cfg')
+    for filename in includes:
         include_line = '[include %s]' % filename
         if not re.search(
             r'^\s*\[include\s+' + re.escape(filename) + r'\]\s*$',
@@ -326,6 +377,7 @@ def prepare(home, purge_mm=None, pullback_speed=None):
                 )
     settings = configurations / 'bmcu-controles-ajustes.cfg'
     tip_settings = configurations / 'bmcu-formacao-ponta.cfg'
+    ajustes_cortador = configurations / 'bmcu-cortador.cfg'
     sequence = (
         destination.read_text() if destination.is_file() else CONFIGURATION
     )
@@ -351,7 +403,8 @@ def prepare(home, purge_mm=None, pullback_speed=None):
             sequence[: section.start()] + text + sequence[section.end() :]
         )
     compile(MODULE, 'bmcu_integracao_ender.py', 'exec')
-    return {
+    compile(CORTADOR, 'bmcu_cortador_ender.py', 'exec')
+    changes = {
         root.resolve(): content.encode(),
         sensor.resolve(): patch_sensor(
             sensor.read_text() if sensor.is_file() else MEASUREMENT
@@ -359,6 +412,7 @@ def prepare(home, purge_mm=None, pullback_speed=None):
         contracts.resolve(): patch_contract(contracts.read_text()).encode(),
         manager.resolve(): patch_pre_capture(manager.read_text()).encode(),
         module.resolve(): MODULE.encode(),
+        (extras / 'bmcu_cortador_ender.py').resolve(): CORTADOR,
         (extras / 'bmcu_core/ender_transport.py').resolve(): TRANSPORT_GUARD,
         daemon.resolve(): patch_transport(daemon.read_text()).encode(),
         (configurations / 'bmcu-controles.cfg').resolve(): CONTROLS,
@@ -371,7 +425,15 @@ def prepare(home, purge_mm=None, pullback_speed=None):
             else TIP_SETTINGS
         ),
         destination.resolve(): sequence.encode(),
+        ajustes_cortador.resolve(): (
+            ajustes_cortador.read_bytes()
+            if ajustes_cortador.is_file()
+            else AJUSTES_CORTADOR
+        ),
     }
+    if dados_servo is not None:
+        changes[arquivo_servo.resolve()] = dados_servo
+    return changes
 
 
 def write_file(path, data, user, mode=0o644):
@@ -428,12 +490,20 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--purge-mm', type=float)
     parser.add_argument('--pullback-speed', type=float)
+    parser.add_argument('--cutter-servo-pin', dest='pino_servo_cortador')
     args = parser.parse_args()
     name = os.environ.get('SUDO_USER') if os.geteuid() == 0 else None
     user = pwd.getpwnam(name) if name else pwd.getpwuid(os.getuid())
     home = Path(user.pw_dir)
     check_printer()
-    changes = prepare(home, args.purge_mm, args.pullback_speed)
+    if args.pino_servo_cortador is not None:
+        validar_pino_cortador(
+            args.pino_servo_cortador,
+            query_object('configfile').get('config', {}),
+        )
+    changes = prepare(
+        home, args.purge_mm, args.pullback_speed, args.pino_servo_cortador
+    )
     originals = {p: p.read_bytes() if p.exists() else None for p in changes}
     changes = {p: d for p, d in changes.items() if originals[p] != d}
     if not changes:
