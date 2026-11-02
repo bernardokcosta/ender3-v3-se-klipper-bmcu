@@ -302,7 +302,8 @@ def preparar_servo_cortador(caminho, pino):
         existente = re.search(r'(?m)^\s*pin\s*:\s*(\S+)\s*$', conteudo)
         if existente is None or existente.group(1) != pino:
             raise ValueError(
-                'O arquivo do servo ja existe com outro pino; revise-o manualmente.'
+                'O arquivo do servo ja existe com outro pino; '
+                'revise-o manualmente.'
             )
         return caminho.read_bytes()
     return (
