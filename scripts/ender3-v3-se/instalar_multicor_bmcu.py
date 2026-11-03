@@ -328,6 +328,42 @@ def validar_pino_cortador(pino, configuracao):
                 )
 
 
+def corrigir_aquecimento_inicio(texto, nome, monocor=False):
+    secao = re.search(
+        r'(?ms)^\[gcode_macro '
+        + re.escape(nome)
+        + r'\][^\S\n]*\n.*?(?=^\[|\Z)',
+        texto,
+    )
+    if secao is None:
+        return texto
+    trecho = secao.group()
+    comando = 'BMCU_ENDER_POSICIONAR_PURGA'
+    if comando in trecho:
+        return texto
+    padrao = r'(?m)^( +)M109 +S\{nozzle_temp\}[^\S\n]*\n'
+    aquecimento = re.search(padrao, trecho)
+    if aquecimento is None:
+        raise RuntimeError(
+            'Revise manualmente o aquecimento do macro %s.' % nome
+        )
+    retorno = ''
+    if monocor:
+        retorno = aquecimento[1] + 'G1 X5 Y20 F6000\n'
+        if trecho[: aquecimento.start()].count(retorno) != 1:
+            raise RuntimeError(
+                'Revise manualmente a posicao inicial do macro %s.' % nome
+            )
+        trecho = trecho.replace(retorno, '', 1)
+    trecho = re.sub(
+        padrao,
+        lambda linha: linha[1] + comando + '\n' + linha[0] + retorno,
+        trecho,
+        count=1,
+    )
+    return texto[: secao.start()] + trecho + texto[secao.end() :]
+
+
 def prepare(
     home, purge_mm=None, pullback_speed=None, pino_servo_cortador=None
 ):
@@ -382,6 +418,7 @@ def prepare(
     sequence = (
         destination.read_text() if destination.is_file() else CONFIGURATION
     )
+    sequence = corrigir_aquecimento_inicio(sequence, 'ENDER_INICIAR_MULTICOR')
     for key, value in (('purga_mm', purge_mm), ('recuo_f', pullback_speed)):
         if value is None:
             continue
@@ -434,6 +471,11 @@ def prepare(
     }
     if dados_servo is not None:
         changes[arquivo_servo.resolve()] = dados_servo
+    impressao = configurations / 'impressao.cfg'
+    if impressao.is_file():
+        changes[impressao.resolve()] = corrigir_aquecimento_inicio(
+            impressao.read_text(), 'ENDER_INICIAR_IMPRESSAO', monocor=True
+        ).encode()
     return changes
 
 

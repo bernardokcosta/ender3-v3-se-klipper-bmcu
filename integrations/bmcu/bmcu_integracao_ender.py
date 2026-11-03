@@ -88,6 +88,10 @@ class EnderIntegration:
         self.gcode.register_command(
             'BMCU_ENDER_RESETAR', self.protect(self.resetar_bmcu)
         )
+        self.gcode.register_command(
+            'BMCU_ENDER_POSICIONAR_PURGA',
+            self.protect(self.posicionar_para_aquecimento),
+        )
         self.printer.register_event_handler('klippy:ready', self.ready)
         for event in ('stepper_enable:motor_off', 'homing:home_rails_begin'):
             self.printer.register_event_handler(
@@ -1026,7 +1030,15 @@ class EnderIntegration:
             self.unload_encoder_gap(device, channel, tracking)
         return completed
 
-    def position_head(self):
+    def posicionar_para_aquecimento(self, gcmd):
+        if self.bmcu.active_operations or self.manual_operation is not None:
+            raise gcmd.error('Aguarde o fim da operacao da BMCU.')
+        perfil = self.cortador.preparar()
+        if perfil and not self.cortador.recolhido:
+            raise gcmd.error('Recolha e confira o batente antes de posicionar.')
+        self.position_head(exigir_aquecimento=False)
+
+    def position_head(self, exigir_aquecimento=True):
         toolhead = self.printer.lookup_object('toolhead')
         pendente = getattr(self, 'posicionamento_pendente', None)
         if pendente is not None:
@@ -1073,7 +1085,7 @@ class EnderIntegration:
         )
         extruder = self.printer.lookup_object('extruder')
         status = extruder.get_status(self.reactor.monotonic())
-        if not status.get('can_extrude'):
+        if exigir_aquecimento and not status.get('can_extrude'):
             raise RuntimeError('Heat the nozzle before changing filament.')
 
     def move_filament(self, mm, speed, chunk=10.0):

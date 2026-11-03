@@ -90,6 +90,14 @@ Klipper process. Files are restored if Klipper does not become ready. Backups
 and a rollback utility are written locally. Git updates alone do not replace
 optional modules installed outside the tracked checkout.
 
+The installer also updates the supported print-start heating sequence in
+`bmcu-multicor-ender.cfg` and an existing `impressao.cfg`. After homing and
+loading the mesh, the head reaches the configured purge chute before waiting
+for the nozzle to rise from its standby target (up to 150 degrees C) to the
+print temperature. The positioning command does not extrude or enable cold
+extrusion. Custom startup layouts that cannot be migrated are rejected for
+manual review; calibrated distances, coordinates and `SAVE_CONFIG` are kept.
+
 For initial endpoint setup, review the example macros before running
 `BMCU_CONFIGURAR_MULTICOR`. Setup does not overwrite channel material/color
 assignments. Do not run endpoint setup at every boot or print start.
