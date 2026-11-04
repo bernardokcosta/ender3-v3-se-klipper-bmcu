@@ -155,10 +155,7 @@ class EnderIntegration:
         def executar(gcmd):
             perfil = self.cortador.preparar()
             if perfil and not self.cortador.recolhido:
-                raise gcmd.error(
-                    'Confira a folga e recolha o batente com CORTADOR_SERVO '
-                    'ANGULO=<angulo_recolhido> CONFIRMAR=1 antes de G28.'
-                )
+                self.cortador.recolher_para_homing(perfil)
             return anterior(gcmd)
 
         return executar

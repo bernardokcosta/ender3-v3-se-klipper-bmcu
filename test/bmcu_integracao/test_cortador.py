@@ -346,15 +346,83 @@ class TestesCortador(unittest.TestCase):
 
     def test_homing_aguarda_confirmacao_do_batente_apos_reinicio(self):
         b = BancadaCortador()
+        b.referencias = ''
+        b.bmcu.active_operations = {}
         homing = []
         comando = b.obj.validar_homing_cortador(lambda g: homing.append(True))
-        with self.assertRaisesRegex(RuntimeError, 'recolha'):
+        with self.assertRaisesRegex(RuntimeError, 'Fechar batente'):
             comando(Gcmd())
         self.assertEqual([], homing)
         b.bmcu.active_operations = {}
         b.obj.cortador.servo_manual(Gcmd(ANGULO=0, CONFIRMAR=1))
         comando(Gcmd())
         self.assertEqual([True], homing)
+
+    def test_homing_recolhe_so_em_posicao_livre_ou_com_autorizacao(self):
+        for eixos, x, autoriza, permitido in (
+            ('x', 170, 0, True),
+            ('x', 210, 1, False),
+            ('', 170, 0, False),
+            ('', 170, 1, True),
+        ):
+            with self.subTest(eixos=eixos, x=x, autoriza=autoriza):
+                b = BancadaCortador()
+                b.bmcu.active_operations = {}
+                b.referencias = eixos
+                b.position[0] = x
+                b.ajustes.update(
+                    x_aproximacao=180.0, x_contato=190.0, x_corte=230.0,
+                    curso_maximo_mm=40.0, recolher_sem_referencia=autoriza,
+                    angulo_recolhido=180.0, angulo_acionado=20.0,
+                )
+                comando = b.obj.validar_homing_cortador(
+                    lambda g: b.eventos.append(('homing',))
+                )
+                if permitido:
+                    comando(Gcmd())
+                    self.assertEqual(('homing',), b.eventos[-1])
+                    self.assertEqual(
+                        [('gcode',
+                          'SET_SERVO SERVO=bmcu_cortador ANGLE=180.000000')],
+                        [evento for evento in b.eventos
+                         if evento[0] == 'gcode'],
+                    )
+                    self.assertTrue(b.obj.cortador.recolhido)
+                else:
+                    with self.assertRaises(RuntimeError):
+                        comando(Gcmd())
+                    self.assertFalse(any(
+                        evento[0] in ('gcode', 'homing') for evento in b.eventos
+                    ))
+
+    def test_homing_nao_recolhe_automaticamente_apos_corte_interrompido(self):
+        b = BancadaCortador()
+        b.bmcu.active_operations = {}
+        b.ajustes['recolher_sem_referencia'] = 1
+        b.obj.cortador.incerto = True
+        comando = b.obj.validar_homing_cortador(
+            lambda g: self.fail('Homing nao deve iniciar')
+        )
+        with self.assertRaisesRegex(RuntimeError, 'incerta'):
+            comando(Gcmd())
+        self.assertEqual([], b.eventos)
+
+    def test_posicao_nomeada_usa_angulos_configurados_sem_mover_eixos(self):
+        b = BancadaCortador()
+        b.bmcu.active_operations = {}
+        b.referencias = ''
+        b.ajustes.update(angulo_recolhido=180.0, angulo_acionado=20.0)
+        b.obj.cortador.servo_manual(Gcmd(POSICAO='ACIONADO', CONFIRMAR=1))
+        self.assertFalse(b.obj.cortador.recolhido)
+        b.obj.cortador.servo_manual(Gcmd(POSICAO='RECOLHIDO', CONFIRMAR=1))
+        self.assertTrue(b.obj.cortador.recolhido)
+        self.assertEqual(
+            [
+                ('gcode', 'SET_SERVO SERVO=bmcu_cortador ANGLE=20.000000'),
+                ('gcode', 'SET_SERVO SERVO=bmcu_cortador ANGLE=180.000000'),
+            ],
+            [evento for evento in b.eventos if evento[0] != 'esperar'],
+        )
 
     def test_servo_pode_recolher_corte_interrompido_com_impressao_pausada(
         self,

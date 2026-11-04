@@ -857,6 +857,30 @@ class DisplayLanguageTest(unittest.TestCase):
                               labels)
             self.assertIn(translate('Unload filament', language), labels)
 
+    def test_batente_na_tela_exige_confirmacao_antes_do_servo_e_homing(self):
+        h, ui, _ = self.make_ui("pt_BR")
+        ui.show_move_menu()
+        self.assertNotIn("Fechar batente", [item.label for item in ui.items])
+        h.display.cortador_configurado = lambda: types.SimpleNamespace(
+            recolhido=False)
+        comandos = []
+        h.display._execute = lambda texto: (comandos.append(texto) or True, "")
+        for rotulo, posicao in (("Abrir batente", "ACIONADO"),
+                                ("Fechar batente", "RECOLHIDO")):
+            ui.show_move_menu()
+            menu = next(item for item in ui.items if item.label == rotulo)
+            total = len(comandos)
+            menu.callback()
+            self.assertEqual(total, len(comandos))
+            ui.items[0].callback()
+            self.assertEqual(
+                "CORTADOR_SERVO POSICAO=%s CONFIRMAR=1" % posicao, comandos[-1])
+        ui.solicitar_homing()
+        self.assertEqual(2, len(comandos))
+        ui.items[0].callback()
+        self.assertEqual(
+            "CORTADOR_SERVO POSICAO=RECOLHIDO CONFIRMAR=1\nG28", comandos[-1])
+
     def test_default_language_and_configured_portuguese(self):
         path = os.path.join(
             ROOT, "config", "printer-creality-ender3-v3-se-gd32f303-2023.cfg")

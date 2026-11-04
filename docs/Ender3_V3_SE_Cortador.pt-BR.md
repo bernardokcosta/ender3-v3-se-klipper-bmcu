@@ -49,8 +49,12 @@ O arquivo `bmcu-cortador.cfg` começa com `habilitado=0` e `calibrado=0`. As coo
 1. Com o cabeçote fisicamente afastado do batente, use `CORTADOR_SERVO ANGULO=<angulo_seguro> CONFIRMAR=1` para encontrar as posições recolhida e acionada. Se não souber a direção, comece com o braço sem carga mecânica.
 2. Edite os ângulos, `variable_x_aproximacao`, `variable_x_corte`, `variable_y_corte` e a folga Z em `bmcu-cortador.cfg`. Meça o curso completo na sua montagem. As coordenadas de purga não são coordenadas de corte. Confira interferências com câmera, ventoinha, hub e mesa sem aumentar limites para esconder colisões.
 3. Reinicie o Klipper, comande o ângulo recolhido e faça homing. Com hotend/caminho compartilhado livres e canais estacionados, execute `TESTAR_CORTADOR CONFIRMAR=1`. O teste é mecânico, sem aquecer ou extrudar. Confira corte completo, retorno da mola e recolhimento.
-4. Depois do teste, configure `variable_calibrado: 1` e `variable_habilitado: 1` e reinicie. **Após cada reinício**, confira a folga e comande novamente o ângulo recolhido com `CORTADOR_SERVO ... CONFIRMAR=1` antes de `G28` ou carregar/retirar filamento.
+4. Depois do teste, configure `variable_calibrado: 1` e `variable_habilitado: 1` e reinicie.
 5. Faça carga e retirada a quente, confira a ponta cortada e o fluxo no bico, depois repita um teste curto de quatro cores. Não há sensor de posição da lâmina, confirmação de corte ou captura depois das engrenagens: comandos concluídos não comprovam sucesso físico.
+
+Na tela original, **Mover → Abrir batente / Fechar batente** comanda só o servo, após a confirmação de folga. **Preparar → Referenciar eixos** pode pedir essa confirmação e então recolher o batente antes do homing. Pelo console, use `CORTADOR_SERVO POSICAO=RECOLHIDO CONFIRMAR=1` com o cabeçote livre.
+
+O `G28` recolhe sozinho se o X já estiver referenciado e no lado livre do batente. Sem referência de X, ele pede confirmação por padrão. Só coloque `variable_recolher_sem_referencia: 1` na seção `[gcode_macro _BMCU_ENDER_CORTADOR_AJUSTES]` se o batente puder recolher sem interferência **em qualquer posição física do cabeçote**, inclusive onde um corte pode ter sido interrompido por falta de energia. A opção não abre o batente durante o homing. Se o corte falhar e a posição do batente ficar incerta na sessão atual, é preciso confirmar o recolhimento manualmente.
 
 Se estiver habilitado sem calibração, sem servo, fora dos limites ou com posição incerta, o sistema interrompe a operação. Ele não volta silenciosamente à formação de ponta. Desabilitado, mantém o fluxo anterior.
 

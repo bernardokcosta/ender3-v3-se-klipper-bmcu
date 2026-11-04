@@ -23,6 +23,7 @@ class CortadorEnder:
             return None
         perfil.setdefault('soltar_servo_recolhido', 0)
         perfil.setdefault('manter_y_corte', 0)
+        perfil.setdefault('recolher_sem_referencia', 0)
         if perfil.get('x_contato') is None:
             perfil['x_contato'] = perfil.get('x_aproximacao')
         if any(
@@ -30,6 +31,7 @@ class CortadorEnder:
             for chave in (
                 'habilitado', 'calibrado', 'posicionamento_paralelo',
                 'soltar_servo_recolhido', 'manter_y_corte',
+                'recolher_sem_referencia',
             )
         ):
             raise RuntimeError('As opcoes do cortador devem ser 0 ou 1.')
@@ -133,6 +135,15 @@ class CortadorEnder:
             raise RuntimeError(
                 'Execute G28 antes de testar ou acionar o cortador.'
             )
+        self.validar_limites(perfil, estado)
+        minimo, maximo = estado['axis_minimum'], estado['axis_maximum']
+        posicao = list(cabecote.get_position())
+        altura = max(posicao[2] + perfil['alivio_z'], perfil['z_minimo'])
+        if not minimo[2] <= altura <= maximo[2]:
+            raise RuntimeError('Nao ha altura livre para acionar o cortador.')
+        return cabecote, posicao, altura
+
+    def validar_limites(self, perfil, estado):
         minimo, maximo = estado['axis_minimum'], estado['axis_maximum']
         limites = [(0, ('x_aproximacao', 'x_contato', 'x_corte'))]
         if not perfil['manter_y_corte']:
@@ -145,11 +156,33 @@ class CortadorEnder:
                 raise RuntimeError(
                     'Posicao de corte fora dos limites da impressora.'
                 )
-        posicao = list(cabecote.get_position())
-        altura = max(posicao[2] + perfil['alivio_z'], perfil['z_minimo'])
-        if not minimo[2] <= altura <= maximo[2]:
-            raise RuntimeError('Nao ha altura livre para acionar o cortador.')
-        return cabecote, posicao, altura
+
+    def x_livre_para_recolher(self, perfil, x):
+        sentido = math.copysign(1, perfil['x_corte'] - perfil['x_aproximacao'])
+        return (x - perfil['x_aproximacao']) * sentido <= 0.05
+
+    def recolher_para_homing(self, perfil):
+        if self.integracao.bmcu.active_operations or (
+            self.integracao.manual_operation is not None
+        ):
+            raise RuntimeError('Aguarde a operacao da BMCU antes de G28.')
+        cabecote = self.integracao.printer.lookup_object('toolhead')
+        cabecote.wait_moves()
+        estado = cabecote.get_status(self.integracao.reactor.monotonic())
+        self.validar_limites(perfil, estado)
+        if 'x' in estado['homed_axes']:
+            if not self.x_livre_para_recolher(
+                perfil, cabecote.get_position()[0]
+            ):
+                raise RuntimeError(
+                    'Afaste o cabecote do batente antes de G28.'
+                )
+        elif not perfil['recolher_sem_referencia']:
+            raise RuntimeError(
+                'Confira a folga e use Mover > Fechar batente na tela '
+                'ou CORTADOR_SERVO POSICAO=RECOLHIDO CONFIRMAR=1 antes de G28.'
+            )
+        self.posicionar_recolhido(perfil)
 
     def posicionar_servo(self, perfil, angulo):
         self.integracao.execute(
@@ -174,8 +207,7 @@ class CortadorEnder:
         if self.recolhido:
             return
         cabecote, posicao, altura = self.validar_movimento(perfil)
-        sentido = math.copysign(1, perfil['x_corte'] - perfil['x_aproximacao'])
-        if (posicao[0] - perfil['x_aproximacao']) * sentido > 0.05:
+        if not self.x_livre_para_recolher(perfil, posicao[0]):
             raise RuntimeError(
                 'Afaste o cabecote do batente antes de recolher o servo.'
             )
@@ -258,20 +290,34 @@ class CortadorEnder:
         if perfil is None:
             raise gcmd.error('Instale bmcu-cortador.cfg antes de testar.')
         servo = self.servo(perfil)
-        angulo = float(gcmd.get('ANGULO'))
+        posicao = gcmd.get('POSICAO', '').upper()
+        if posicao:
+            if posicao not in ('RECOLHIDO', 'ACIONADO'):
+                raise gcmd.error('Use POSICAO=RECOLHIDO ou POSICAO=ACIONADO.')
+            if 'ANGULO' in gcmd.get_command_parameters():
+                raise gcmd.error('Use apenas POSICAO ou ANGULO.')
+            angulo = float(perfil['angulo_' + posicao.lower()])
+        else:
+            angulo = float(gcmd.get('ANGULO'))
         if not math.isfinite(angulo) or not 0 <= angulo <= servo.max_angle:
             raise gcmd.error('Angulo fora dos limites do servo.')
         espera = float(perfil.get('espera_servo_ms', 500))
         if not math.isfinite(espera) or espera <= 0:
             raise gcmd.error('Espera do servo invalida.')
         perfil['espera_servo_ms'] = espera
-        if math.isclose(
+        recolher = math.isclose(
             angulo, float(perfil['angulo_recolhido']), abs_tol=0.01
-        ):
+        )
+        if recuperacao and estado in ('paused', 'pause') and not recolher:
+            raise gcmd.error('Recolha o batente para recuperar a troca.')
+        if recolher:
             self.posicionar_recolhido(perfil)
         else:
-            self.posicionar_servo(perfil, angulo)
+            incerto = self.incerto
             self.recolhido = False
+            self.incerto = True
+            self.posicionar_servo(perfil, angulo)
+            self.incerto = incerto
         gcmd.respond_info(
             'Servo comandado a %.1f graus; confira a posicao fisica.' % angulo
         )
