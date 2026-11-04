@@ -56,6 +56,8 @@ The new `bmcu-cortador.cfg` ships with `habilitado=0`, `calibrado=0` and invalid
 
 If the cutter is enabled but uncalibrated, missing its servo, outside travel limits or left uncertain, operations stop rather than falling back to hot tip forming. With the optional profile disabled, the previous tip-forming workflow is preserved.
 
+If the servo jitters while holding the stop retracted, test with the carriage parked clear: command the retracted angle, wait for the horn to settle, then send `SET_SERVO SERVO=bmcu_cortador WIDTH=0`. Set `variable_soltar_servo_recolhido: 1` in `[gcode_macro _BMCU_ENDER_CORTADOR_AJUSTES]` only if the stop stays clear of the entire carriage path without servo torque, including under vibration. Add the line if missing and repeat the dry cycle. PWM stays on from deployment until the carriage backs away and the stop retracts; the 5 V supply stays on. With the option off, PWM stays on at the retracted angle.
+
 ## Faster exchanges
 
 With a calibrated, enabled cutter, the integration replaces separation/cooling moves with the mechanical cutting cycle. It retains switch clearance, encoder feedback, compression limits and the confirmed 55 mm parking withdrawal; it does not allow a new filament into an occupied or uncertain route.

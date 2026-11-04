@@ -54,6 +54,8 @@ O arquivo `bmcu-cortador.cfg` começa com `habilitado=0` e `calibrado=0`. As coo
 
 Se estiver habilitado sem calibração, sem servo, fora dos limites ou com posição incerta, o sistema interrompe a operação. Ele não volta silenciosamente à formação de ponta. Desabilitado, mantém o fluxo anterior.
 
+Se o servo tremer enquanto mantém o batente recolhido, teste com o cabeçote longe e parado: comande o ângulo recolhido, espere o braço parar e envie `SET_SERVO SERVO=bmcu_cortador WIDTH=0`. Só use `variable_soltar_servo_recolhido: 1` em `[gcode_macro _BMCU_ENDER_CORTADOR_AJUSTES]` se o batente continuar fora de todo o percurso do cabeçote sem o torque do servo, mesmo com vibração. Acrescente a linha se ela não existir e repita o teste mecânico. O PWM fica ligado desde o acionamento até o cabeçote se afastar e o batente recolher; os 5 V continuam ligados. Sem esse ajuste, o servo mantém o PWM na posição recolhida.
+
 ## Velocidade e segurança do caminho
 
 O perfil do cortador elimina a formação térmica da ponta e começa com recuo F600, avanço ao bico F240 e purga F180, em mm/min. A captura e as distâncias existentes são preservadas. A BMCU precisa acompanhar o recuo; a velocidade de recolhimento validada é 10 mm/s. Reduza as velocidades se houver patinação ou fluxo insuficiente, sem aumentar a tolerância de erro do encoder para esconder o problema.
