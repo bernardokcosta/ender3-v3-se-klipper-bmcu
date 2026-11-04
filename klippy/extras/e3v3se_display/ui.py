@@ -258,8 +258,7 @@ class DisplayUI:
 
     def show_prepare_menu(self):
         items = [
-            MenuItem("Home all", lambda: self._run_and_report(
-                self.owner.home_all, "Homing all axes")),
+            MenuItem("Home all", self.solicitar_homing),
             MenuItem("Preheat PLA", lambda: self._run_and_report(
                 self.owner.preheat_pla, "PLA preheat selected")),
             MenuItem("Preheat PETG", lambda: self._run_and_report(
@@ -338,9 +337,39 @@ class DisplayUI:
             MenuItem("Move Y (1 mm)", lambda: self._axis_adjust("Y", 1.0)),
             MenuItem("Move Z (0.1 mm)", lambda: self._axis_adjust("Z", 0.1)),
             MenuItem("Extrude (5 mm)", lambda: self._axis_adjust("E", 5.0)),
-            self._back_item(self.show_main_menu),
         ]
+        if self.owner.cortador_configurado() is not None:
+            items.extend([
+                MenuItem("Open cutter stop", lambda: self.confirmar_batente(
+                    False)),
+                MenuItem("Close cutter stop", lambda: self.confirmar_batente(
+                    True)),
+            ])
+        items.append(self._back_item(self.show_main_menu))
         self.show_menu("MOVE", items, self.show_main_menu)
+
+    def confirmar_batente(self, recolher):
+        titulo = "Close cutter stop" if recolher else "Open cutter stop"
+
+        def executar():
+            if self._run_and_report(
+                lambda: self.owner.mover_batente(recolher)
+            ):
+                self.show_move_menu()
+
+        self.show_confirmation(
+            titulo, "Keep head clear of stop", executar, self.show_move_menu)
+
+    def solicitar_homing(self):
+        if self.owner.homing_requer_batente():
+            self.show_confirmation(
+                "Close stop and home?", "Keep head clear of stop",
+                lambda: self._run_and_report(
+                    lambda: self.owner.home_all(recolher_batente=True),
+                    "Homing all axes"),
+                self.show_prepare_menu)
+            return
+        self._run_and_report(self.owner.home_all, "Homing all axes")
 
     def _target_adjust(self, kind, title, value, step, maximum, callback, unit):
         self.show_adjustment(title, value, step, 0, maximum, callback, unit, 0,
