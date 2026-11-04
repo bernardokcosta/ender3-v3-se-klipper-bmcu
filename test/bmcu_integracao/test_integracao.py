@@ -673,6 +673,20 @@ class IntegrationTests(unittest.TestCase):
             installer.validar_pino_cortador('host:gpiochip1/gpio73', config)
         installer.validar_pino_cortador('host:gpiochip1/gpio74', config)
 
+    def test_cortador_rejeita_pc9_do_pmic_na_zero3(self):
+        for modelo in ('OrangePi Zero3\x00', 'Orange Pi Zero 3'):
+            with self.subTest(modelo=modelo):
+                with self.assertRaisesRegex(ValueError, 'PMIC'):
+                    installer.validar_pino_cortador(
+                        'host:gpiochip1/gpio73', {'mcu host': {}}, modelo
+                    )
+                installer.validar_pino_cortador(
+                    'host:gpiochip1/gpio72', {'mcu host': {}}, modelo
+                )
+        installer.validar_pino_cortador(
+            'host:gpiochip1/gpio73', {'mcu host': {}}, 'Outra placa'
+        )
+
     def test_native_capture_starts_extruder_before_feeder(self):
         original = (BASE / 'manager_original.txt').read_text()
         updated = installer.patch_pre_capture(original)

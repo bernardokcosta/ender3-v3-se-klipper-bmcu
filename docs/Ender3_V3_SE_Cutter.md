@@ -12,22 +12,26 @@ Use a positional SG90, not a continuous-rotation model. The original gantry moun
 
 | Connection | Destination |
 | --- | --- |
-| Servo signal, usually orange/yellow | Proposed physical header pin **7, PC9** |
+| Servo signal, usually orange/yellow | Proposed physical header pin **15, PC8** |
 | Servo ground, usually brown/black | Regulated supply ground and Orange Pi **GND**, e.g. physical pin **6** |
 | Servo supply, usually red | Separate regulated **5 V** supply with capacity for servo current peaks |
 
 The GPIO carries the 3.3 V control signal, not motor power. Keep the Orange Pi's supply unchanged, join grounds, and do not backfeed the external supply into the Pi's 5 V header. Never connect the servo to 24 V. Tower Pro reports substantial current peaks; a regulated supply rated for at least 2 A is a conservative starting point for one SG90.
 
-The validated entry switch occupies PC15, physical pin 16. The BMCU uses UART5; do not enable a PWM overlay on its RX/TX pins. PC9 uses the existing Linux MCU's software PWM and does not require changing UART or boot overlays. Check pulse stability with the camera and normal host load; use hardware PWM or a dedicated MCU if this arrangement jitters. Software tests do not verify electrical timing or actual blade travel.
+The validated entry switch occupies PC15, physical pin 16. The BMCU uses UART5; do not enable a PWM overlay on its RX/TX pins. PC8 uses the existing Linux MCU's software PWM and does not require changing UART or boot overlays. Check pulse stability with the camera and normal host load; use hardware PWM or a dedicated MCU if this arrangement jitters. Software tests do not verify electrical timing or actual blade travel.
 
 Before wiring, run on the Orange Pi:
 
 ```sh
-gpiodetect
-gpioinfo
+sudo gpiodetect
+sudo gpioinfo
 ```
 
-Confirm which gpiochip contains PC9 and that its line is unused. In the currently validated layout the candidate is `host:gpiochip1/gpio73`, but gpiochip numbering depends on the kernel. The physical pin number is not the GPIO offset. Cross-check [the board pinout](http://www.orangepi.org/orangepiwiki/index.php/Orange_Pi_Zero_3#26_Pin_Interface_Pin_Description), the [GPIO library mapping](https://github.com/rm-hull/OPi.GPIO/issues/79) and [Klipper's Linux MCU guidance](https://www.klipper3d.org/RPi_microcontroller.html).
+Confirm which gpiochip contains PC8 and that its line is unused. In the observed gpiochip layout the proposed PC8 address is `host:gpiochip1/gpio72`, but gpiochip numbering depends on the kernel. The physical pin number is not the GPIO offset. Cross-check [the board pinout](http://www.orangepi.org/orangepiwiki/index.php/Orange_Pi_Zero_3#26_Pin_Interface_Pin_Description), the [GPIO library mapping](https://github.com/rm-hull/OPi.GPIO/issues/79) and [Klipper's Linux MCU guidance](https://www.klipper3d.org/RPi_microcontroller.html).
+
+PC9 (physical pin 7) is connected to the AXP313A power-management interrupt in the [Linux Zero 3 device tree](https://github.com/torvalds/linux/blob/v6.18/arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero3.dts). Do not use it as a servo output or disable the PMIC interrupt to free it. A line without a consumer in `gpioinfo` is not proof that it is available as an output: IRQ and pin-mux ownership must also be considered. The installer rejects GPIO offset 73 when the board model identifies an Orange Pi Zero 3. The previous PC9 recommendation was incorrect.
+
+If installation failed on PC9, retain the restored configuration. Power the system down before moving only the servo signal wire to PC8; keep supply and common ground as documented. After booting into a ready state, rerun the installer with the checked PC8 mapping. If the Linux MCU remains shut down after rollback, use `FIRMWARE_RESTART` with the restored configuration before retrying. Do not send servo commands until installation succeeds.
 
 ## Installation and calibration
 
@@ -37,7 +41,7 @@ Cancel any print, manually recover a jam, and confirm all routes empty or parked
 cd "$HOME/klipper" &&
 git pull --ff-only origin master &&
 sudo python3 scripts/ender3-v3-se/install_multicolor.py \
-  --cutter-servo-pin host:gpiochip1/gpio73
+  --cutter-servo-pin host:gpiochip1/gpio72
 ```
 
 Substitute the actual GPIO mapping if different. This is a host integration change; it does not require a new printer `.bin`. The installer backs up affected files and rolls back on startup failure. It preserves existing cutter angles, positions, pulse widths, purge length, PID, mesh and Z offset. A different existing servo pin must be reviewed manually rather than overwritten. Running without the flag installs the optional profile and reset macro without reserving a servo pin.
