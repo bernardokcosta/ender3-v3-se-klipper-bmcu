@@ -127,6 +127,40 @@ class TestesCortador(unittest.TestCase):
         self.assertIn('cut_seconds', b.obj.last_unload_timing)
         self.assertFalse(b.obj.cortador.incerto)
 
+    def test_recuo_antes_do_corte_para_alimentador_antes_da_lamina(self):
+        b = BancadaCortador()
+        b.ajustes['recuo_antes_corte_mm'] = 2.0
+        executar = b.gcode.run_script_from_command
+        estado_ao_acionar = []
+
+        def observar(comando):
+            if 'ANGLE=90.' in comando:
+                estado_ao_acionar.append((b.e, b.device.status['motion'][3]))
+            return executar(comando)
+
+        b.gcode.run_script_from_command = observar
+        b.unload()
+        self.assertEqual(
+            [(-2.0, protocol.MOTION_IDLE)], estado_ao_acionar
+        )
+        self.assertEqual(
+            [(-1.0, protocol.MOTION_BEFORE_PULL_BACK)] * 2, b.moves[:2]
+        )
+        self.assertEqual(2.0, b.obj.last_unload_timing['pre_cut_retract_mm'])
+        self.assertEqual([(3, 55.0)], b.policies)
+
+    def test_recuo_que_libera_o_sensor_impede_acionamento_da_lamina(self):
+        b = BancadaCortador()
+        b.ajustes['recuo_antes_corte_mm'] = 2.0
+        b.switch_distance = 1.0
+        with self.assertRaisesRegex(RuntimeError, 'entry sensor'):
+            b.unload()
+        self.assertNotIn(
+            ('gcode', 'SET_SERVO SERVO=bmcu_cortador ANGLE=90.000000'),
+            b.eventos,
+        )
+        self.assertEqual('parar', b.actuators[-1])
+
     def test_pwm_fica_ativo_ate_recuar_e_recolher_o_batente(self):
         b = BancadaCortador()
         b.ajustes['soltar_servo_recolhido'] = 1
@@ -195,6 +229,8 @@ class TestesCortador(unittest.TestCase):
         for chave, valor in [
             ('x_corte', math.nan),
             ('corte_f', 0),
+            ('recuo_antes_corte_mm', -1),
+            ('recuo_antes_corte_mm', 5.1),
             ('angulo_acionado', 181),
             ('x_aproximacao', -20),
             ('velocidade_recuo_f', 10000),
