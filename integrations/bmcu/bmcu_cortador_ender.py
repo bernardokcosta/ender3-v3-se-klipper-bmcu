@@ -21,9 +21,13 @@ class CortadorEnder:
         perfil = self.perfil()
         if perfil is None or not perfil.get('habilitado') and not calibracao:
             return None
+        perfil.setdefault('soltar_servo_recolhido', 0)
         if any(
             perfil.get(chave) not in (0, 1)
-            for chave in ('habilitado', 'calibrado', 'posicionamento_paralelo')
+            for chave in (
+                'habilitado', 'calibrado', 'posicionamento_paralelo',
+                'soltar_servo_recolhido',
+            )
         ):
             raise RuntimeError('As opcoes do cortador devem ser 0 ou 1.')
         if not calibracao and not perfil.get('calibrado'):
@@ -146,6 +150,17 @@ class CortadorEnder:
         cabecote.dwell(perfil['espera_servo_ms'] / 1000)
         cabecote.wait_moves()
 
+    def posicionar_recolhido(self, perfil):
+        self.recolhido = False
+        self.incerto = True
+        self.posicionar_servo(perfil, float(perfil['angulo_recolhido']))
+        if perfil.get('soltar_servo_recolhido') == 1:
+            self.integracao.execute(
+                'SET_SERVO SERVO=%s WIDTH=0' % perfil['servo']
+            )
+        self.recolhido = True
+        self.incerto = False
+
     def recolher(self, perfil):
         if self.recolhido:
             return
@@ -155,8 +170,7 @@ class CortadorEnder:
             raise RuntimeError(
                 'Afaste o cabecote do batente antes de recolher o servo.'
             )
-        self.posicionar_servo(perfil, perfil['angulo_recolhido'])
-        self.recolhido = True
+        self.posicionar_recolhido(perfil)
 
     def mover(self, cabecote, coordenadas, velocidade):
         with self.integracao.bmcu.printer_critical_section('cortador_ender'):
@@ -189,9 +203,7 @@ class CortadorEnder:
                 [perfil['x_aproximacao'], None, None],
                 perfil['corte_f'],
             )
-            self.posicionar_servo(perfil, perfil['angulo_recolhido'])
-            self.recolhido = True
-            self.incerto = False
+            self.posicionar_recolhido(perfil)
             verificar()
             if retornar:
                 self.mover(
@@ -243,12 +255,13 @@ class CortadorEnder:
         if not math.isfinite(espera) or espera <= 0:
             raise gcmd.error('Espera do servo invalida.')
         perfil['espera_servo_ms'] = espera
-        self.posicionar_servo(perfil, angulo)
-        self.recolhido = math.isclose(
+        if math.isclose(
             angulo, float(perfil['angulo_recolhido']), abs_tol=0.01
-        )
-        if self.recolhido:
-            self.incerto = False
+        ):
+            self.posicionar_recolhido(perfil)
+        else:
+            self.posicionar_servo(perfil, angulo)
+            self.recolhido = False
         gcmd.respond_info(
             'Servo comandado a %.1f graus; confira a posicao fisica.' % angulo
         )

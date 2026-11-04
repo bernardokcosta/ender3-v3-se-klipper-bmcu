@@ -127,6 +127,61 @@ class TestesCortador(unittest.TestCase):
         self.assertIn('cut_seconds', b.obj.last_unload_timing)
         self.assertFalse(b.obj.cortador.incerto)
 
+    def test_pwm_fica_ativo_ate_recuar_e_recolher_o_batente(self):
+        b = BancadaCortador()
+        b.ajustes['soltar_servo_recolhido'] = 1
+        b.obj.cortador.recolhido = True
+        perfil = b.obj.cortador.preparar()
+        b.obj.cortador.cortar(perfil, lambda: None, retornar=False)
+        eventos = [
+            evento[:2] for evento in b.eventos
+            if evento[0] in ('mover', 'gcode')
+        ]
+        self.assertEqual(
+            [
+                ('gcode', 'SET_SERVO SERVO=bmcu_cortador ANGLE=90.000000'),
+                ('mover', [-7.0, None, None]),
+                ('mover', [-2.0, None, None]),
+                ('gcode', 'SET_SERVO SERVO=bmcu_cortador ANGLE=0.000000'),
+                ('gcode', 'SET_SERVO SERVO=bmcu_cortador WIDTH=0'),
+            ],
+            eventos[2:],
+        )
+
+    def test_corte_interrompido_nao_soltar_batente_acionado(self):
+        b = BancadaCortador()
+        b.ajustes['soltar_servo_recolhido'] = 1
+        b.obj.cortador.recolhido = True
+        b.falha_corte = True
+        perfil = b.obj.cortador.preparar()
+        with self.assertRaisesRegex(RuntimeError, 'interrompido'):
+            b.obj.cortador.cortar(perfil, lambda: None)
+        self.assertTrue(b.obj.cortador.incerto)
+        self.assertNotIn(
+            ('gcode', 'SET_SERVO SERVO=bmcu_cortador WIDTH=0'), b.eventos
+        )
+
+    def test_recolhimento_manual_soltar_pwm_so_com_opcao_ativa(self):
+        for ajuste in (None, 0, 1):
+            with self.subTest(ajuste=ajuste):
+                b = BancadaCortador()
+                b.bmcu.active_operations = {}
+                if ajuste is None:
+                    del b.ajustes['soltar_servo_recolhido']
+                else:
+                    b.ajustes['soltar_servo_recolhido'] = ajuste
+                b.obj.cortador.servo_manual(Gcmd(ANGULO=90, CONFIRMAR=1))
+                self.assertEqual(1, len([
+                    evento for evento in b.eventos if evento[0] == 'gcode'
+                ]))
+                b.obj.cortador.servo_manual(Gcmd(ANGULO=0, CONFIRMAR=1))
+                self.assertTrue(b.obj.cortador.recolhido)
+                self.assertEqual(
+                    ajuste == 1,
+                    ('gcode', 'SET_SERVO SERVO=bmcu_cortador WIDTH=0')
+                    in b.eventos,
+                )
+
     def test_cortador_nao_calibrado_nao_move_cabecote_ou_extrusora(self):
         b = BancadaCortador()
         b.ajustes['calibrado'] = 0
