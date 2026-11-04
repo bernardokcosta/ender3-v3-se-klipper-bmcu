@@ -341,7 +341,7 @@ def corrigir_aquecimento_inicio(texto, nome, monocor=False):
     comando = 'BMCU_ENDER_POSICIONAR_PURGA'
     if comando in trecho:
         return texto
-    padrao = r'(?m)^( +)M109 +S\{nozzle_temp\}[^\S\n]*\n'
+    padrao = r'(?m)^( +)M109 +S\{(?:nozzle_temp|bico)\}[^\S\n]*\n'
     aquecimento = re.search(padrao, trecho)
     if aquecimento is None:
         raise RuntimeError(

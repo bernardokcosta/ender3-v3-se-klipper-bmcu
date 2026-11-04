@@ -118,6 +118,52 @@ class AquecimentoTests(unittest.TestCase):
             ),
         )
 
+    def test_migracao_do_macro_legado_com_bico_preserva_todo_o_resto(self):
+        antigo = (
+            ROOT / 'test/bmcu_integracao/fixtures/inicio_multicor_legado.cfg'
+        ).read_text()
+        atualizado = installer.corrigir_aquecimento_inicio(
+            antigo, 'ENDER_INICIAR_MULTICOR'
+        )
+        esperado = antigo.replace(
+            '  M109 S{bico}\n', '  ' + COMANDO + '\n  M109 S{bico}\n'
+        )
+        self.assertEqual(esperado, atualizado)
+        self.assertEqual(
+            atualizado, installer.corrigir_aquecimento_inicio(
+                atualizado, 'ENDER_INICIAR_MULTICOR'
+            )
+        )
+        parser = configparser.RawConfigParser()
+        parser.read_string(atualizado)
+        ambiente = Environment(
+            block_start_string='{%', block_end_string='%}',
+            variable_start_string='{', variable_end_string='}',
+        )
+        resultado = ambiente.from_string(
+            parser['gcode_macro ENDER_INICIAR_MULTICOR']['gcode']
+        ).render(params={
+            'TEMP_MESA': 80, 'TEMP_BICO': 230, 'FERRAMENTA': 2
+        })
+        self.assertIn('M140 S80.0', resultado)
+        self.assertIn('M104 S150.0', resultado)
+        self.assertIn(COMANDO + '\nM109 S230.0', resultado)
+        self.assertIn('BMCU_TROCAR_ENDER TOOL=2 ', resultado)
+
+    def test_migracao_monocor_com_bico_preserva_variavel_e_preparacao(self):
+        atual = (
+            ROOT / 'config/ender3-v3-se-validada/impressao.cfg'
+        ).read_text().replace('nozzle_temp', 'bico')
+        antigo = atual.replace('  ' + COMANDO + '\n', '').replace(
+            '  M109 S{bico}\n  G1 X5 Y20 F6000\n',
+            '  G1 X5 Y20 F6000\n  M109 S{bico}\n',
+        )
+        self.assertEqual(
+            atual, installer.corrigir_aquecimento_inicio(
+                antigo, 'ENDER_INICIAR_IMPRESSAO', monocor=True
+            )
+        )
+
     def test_inicio_desconhecido_exige_revisao_sem_alterar_texto(self):
         for linha in ('M109 S{outra_temperatura}', 'G1 X8 Y22 F6000'):
             antigo = (
