@@ -22,11 +22,14 @@ class CortadorEnder:
         if perfil is None or not perfil.get('habilitado') and not calibracao:
             return None
         perfil.setdefault('soltar_servo_recolhido', 0)
+        perfil.setdefault('manter_y_corte', 0)
+        if perfil.get('x_contato') is None:
+            perfil['x_contato'] = perfil.get('x_aproximacao')
         if any(
             perfil.get(chave) not in (0, 1)
             for chave in (
                 'habilitado', 'calibrado', 'posicionamento_paralelo',
-                'soltar_servo_recolhido',
+                'soltar_servo_recolhido', 'manter_y_corte',
             )
         ):
             raise RuntimeError('As opcoes do cortador devem ser 0 ou 1.')
@@ -43,8 +46,8 @@ class CortadorEnder:
             'angulo_recolhido',
             'angulo_acionado',
             'x_aproximacao',
+            'x_contato',
             'x_corte',
-            'y_corte',
             'z_minimo',
             'alivio_z',
             'curso_maximo_mm',
@@ -54,7 +57,7 @@ class CortadorEnder:
             'velocidade_recuo_f',
             'velocidade_avanco_f',
             'velocidade_purga_f',
-        ):
+        ) + (() if perfil['manter_y_corte'] else ('y_corte',)):
             try:
                 valor = float(perfil[chave])
             except (KeyError, TypeError, ValueError) as erro:
@@ -78,7 +81,13 @@ class CortadorEnder:
                 raise RuntimeError(
                     'Ajuste do cortador deve ser positivo: %s.' % chave
                 )
-        curso = abs(perfil['x_corte'] - perfil['x_aproximacao'])
+        sentido = math.copysign(
+            1, perfil['x_corte'] - perfil['x_aproximacao']
+        )
+        folga = (perfil['x_contato'] - perfil['x_aproximacao']) * sentido
+        curso = (perfil['x_corte'] - perfil['x_contato']) * sentido
+        if folga < 0:
+            raise RuntimeError('Contato anterior ao ponto de aproximacao.')
         if not 0 < curso <= perfil['curso_maximo_mm']:
             raise RuntimeError('Configure um curso de corte dentro do limite.')
         servo = self.servo(perfil)
@@ -125,10 +134,10 @@ class CortadorEnder:
                 'Execute G28 antes de testar ou acionar o cortador.'
             )
         minimo, maximo = estado['axis_minimum'], estado['axis_maximum']
-        for eixo, chaves in (
-            (0, ('x_aproximacao', 'x_corte')),
-            (1, ('y_corte',)),
-        ):
+        limites = [(0, ('x_aproximacao', 'x_contato', 'x_corte'))]
+        if not perfil['manter_y_corte']:
+            limites.append((1, ('y_corte',)))
+        for eixo, chaves in limites:
             if any(
                 not minimo[eixo] <= perfil[chave] <= maximo[eixo]
                 for chave in chaves
@@ -184,9 +193,10 @@ class CortadorEnder:
         try:
             verificar()
             self.mover(cabecote, [None, None, altura], 300)
+            y = None if perfil['manter_y_corte'] else perfil['y_corte']
             self.mover(
                 cabecote,
-                [perfil['x_aproximacao'], perfil['y_corte'], None],
+                [perfil['x_aproximacao'], y, None],
                 perfil['deslocamento_f'],
             )
             verificar()

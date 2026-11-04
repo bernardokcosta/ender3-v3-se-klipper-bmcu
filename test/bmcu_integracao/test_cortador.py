@@ -207,6 +207,44 @@ class TestesCortador(unittest.TestCase):
                     b.obj.cortador.cortar(perfil, lambda: None)
                 self.assertFalse(any(e[0] == 'mover' for e in b.eventos))
 
+    def test_corte_mantem_y_e_limita_apenas_curso_depois_do_contato(self):
+        b = BancadaCortador()
+        b.position[:3] = [110.0, 80.0, 20.0]
+        b.ajustes.update(
+            manter_y_corte=1,
+            x_aproximacao=180.0,
+            x_contato=190.0,
+            x_corte=230.0,
+            curso_maximo_mm=40.0,
+            y_corte=-9999.0,
+        )
+        perfil = b.obj.cortador.preparar()
+        b.obj.cortador.cortar(perfil, lambda: None, retornar=False)
+        self.assertEqual(
+            [
+                [None, None, 22.0],
+                [180.0, None, None],
+                [230.0, None, None],
+                [180.0, None, None],
+            ],
+            [evento[1] for evento in b.eventos if evento[0] == 'mover'],
+        )
+        self.assertEqual(80.0, b.position[1])
+
+    def test_contato_invalido_ou_curso_excessivo_impede_movimento(self):
+        for contato in (179.0, 189.0, 230.0, 231.0):
+            with self.subTest(contato=contato):
+                b = BancadaCortador()
+                b.ajustes.update(
+                    x_aproximacao=180.0,
+                    x_contato=contato,
+                    x_corte=230.0,
+                    curso_maximo_mm=40.0,
+                )
+                with self.assertRaises(RuntimeError):
+                    b.obj.cortador.preparar()
+                self.assertEqual([], b.eventos)
+
     def test_sem_referencia_sem_altura_e_bico_frio_nao_iniciam_corte(self):
         for condicao in ('referencia', 'altura', 'frio'):
             b = BancadaCortador()

@@ -56,6 +56,10 @@ Se estiver habilitado sem calibração, sem servo, fora dos limites ou com posi�
 
 Se o servo tremer enquanto mantém o batente recolhido, teste com o cabeçote longe e parado: comande o ângulo recolhido, espere o braço parar e envie `SET_SERVO SERVO=bmcu_cortador WIDTH=0`. Só use `variable_soltar_servo_recolhido: 1` em `[gcode_macro _BMCU_ENDER_CORTADOR_AJUSTES]` se o batente continuar fora de todo o percurso do cabeçote sem o torque do servo, mesmo com vibração. Acrescente a linha se ela não existir e repita o teste mecânico. O PWM fica ligado desde o acionamento até o cabeçote se afastar e o batente recolher; os 5 V continuam ligados. Sem esse ajuste, o servo mantém o PWM na posição recolhida.
 
+Quando houver trecho livre entre o acionamento e a alavanca, registre o primeiro toque em `variable_x_contato`. Nesse caso, `variable_curso_maximo_mm` limita a distância do contato ao corte completo. Com `None` ou sem essa variável, o limite continua valendo desde a aproximação. O avanço e o recuo com o batente acionado usam `variable_corte_f` em todo o trecho.
+
+Use `variable_manter_y_corte: 1` somente quando houver folga para o corte com a mesa em qualquer posição de troca. O corte ignora `variable_y_corte` nesse modo. A purga continua usando a posição já configurada para a calha.
+
 ## Velocidade e segurança do caminho
 
 O perfil do cortador elimina a formação térmica da ponta e começa com recuo F600, avanço ao bico F240 e purga F180, em mm/min. A captura e as distâncias existentes são preservadas. A BMCU precisa acompanhar o recuo; a velocidade de recolhimento validada é 10 mm/s. Reduza as velocidades se houver patinação ou fluxo insuficiente, sem aumentar a tolerância de erro do encoder para esconder o problema.
