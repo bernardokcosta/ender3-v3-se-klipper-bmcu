@@ -66,6 +66,12 @@ If there is free travel between deploying the stop and touching the lever, set `
 
 Set `variable_manter_y_corte: 1` only if the entire cutting path is clear at every bed position used for tool changes. The cutting cycle ignores `variable_y_corte` in this mode. The purge still uses the configured chute position.
 
+### Retracting before cutting
+
+`variable_recuo_antes_corte_mm` accepts 0 to 5 mm and defaults to 0. With filament loaded, retraction runs at the approach point before the stop deploys. The feeder assists through the usual withdrawal checks and stops before cutting. A cleared entry sensor or failed withdrawal blocks the cut. The dry test does not move filament.
+
+If filament catches at the heatsink entrance, check for the model author’s `Cutter_Base with guide v1`. Before enabling, verify that the filament guide lines up with the hotend and the retract cannot bring softened material to the blade. Compare the 0 mm baseline with a small retract, such as 2 mm if the geometry permits, using the same material and temperature. The retract uses the regular unload speed (`recuo_f`); purge and cut coordinates stay the same.
+
 ## Faster exchanges
 
 With a calibrated, enabled cutter, the integration replaces separation/cooling moves with the mechanical cutting cycle. It retains switch clearance, encoder feedback, compression limits and the confirmed 55 mm parking withdrawal; it does not allow a new filament into an occupied or uncertain route.

@@ -1426,7 +1426,23 @@ class EnderIntegration:
                             'O filamento saiu do sensor durante o corte.'
                         )
 
-                self.cortador.cortar(perfil, verificar_corte, retornar=False)
+                recuo_antes = perfil['recuo_antes_corte_mm']
+
+                def recuar_antes_do_corte():
+                    movido = self.move_unload_filament(
+                        device, destination, channel, session, tracking,
+                        -recuo_antes, self.pullback_speed,
+                    )
+                    device.stop_all()
+                    self.reactor.pause(self.reactor.monotonic() + 0.050)
+                    timing['pre_cut_retract_mm'] = abs(movido)
+
+                self.cortador.cortar(
+                    perfil, verificar_corte, retornar=False,
+                    antes_do_corte=(
+                        recuar_antes_do_corte if recuo_antes else None
+                    ),
+                )
                 timing['cut_seconds'] = self.reactor.monotonic() - tip_started
                 self.position_head()
             else:

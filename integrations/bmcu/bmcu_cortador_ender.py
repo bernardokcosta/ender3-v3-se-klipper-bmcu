@@ -24,6 +24,7 @@ class CortadorEnder:
         perfil.setdefault('soltar_servo_recolhido', 0)
         perfil.setdefault('manter_y_corte', 0)
         perfil.setdefault('recolher_sem_referencia', 0)
+        perfil.setdefault('recuo_antes_corte_mm', 0.0)
         if perfil.get('x_contato') is None:
             perfil['x_contato'] = perfil.get('x_aproximacao')
         if any(
@@ -56,6 +57,7 @@ class CortadorEnder:
             'deslocamento_f',
             'corte_f',
             'espera_servo_ms',
+            'recuo_antes_corte_mm',
             'velocidade_recuo_f',
             'velocidade_avanco_f',
             'velocidade_purga_f',
@@ -83,6 +85,8 @@ class CortadorEnder:
                 raise RuntimeError(
                     'Ajuste do cortador deve ser positivo: %s.' % chave
                 )
+        if not 0 <= perfil['recuo_antes_corte_mm'] <= 5.0:
+            raise RuntimeError('Configure o recuo antes do corte de 0 a 5 mm.')
         sentido = math.copysign(
             1, perfil['x_corte'] - perfil['x_aproximacao']
         )
@@ -218,7 +222,7 @@ class CortadorEnder:
             cabecote.manual_move(coordenadas, velocidade / 60)
             cabecote.wait_moves()
 
-    def cortar(self, perfil, verificar, retornar=True):
+    def cortar(self, perfil, verificar, retornar=True, antes_do_corte=None):
         cabecote, origem, altura = self.validar_movimento(perfil)
         inicio = self.integracao.reactor.monotonic()
         self.recolher(perfil)
@@ -232,6 +236,9 @@ class CortadorEnder:
                 perfil['deslocamento_f'],
             )
             verificar()
+            if antes_do_corte is not None:
+                antes_do_corte()
+                verificar()
             self.incerto = True
             self.recolhido = False
             self.posicionar_servo(perfil, perfil['angulo_acionado'])

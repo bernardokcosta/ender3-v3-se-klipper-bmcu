@@ -64,6 +64,12 @@ Quando houver trecho livre entre o acionamento e a alavanca, registre o primeiro
 
 Use `variable_manter_y_corte: 1` somente quando houver folga para o corte com a mesa em qualquer posição de troca. O corte ignora `variable_y_corte` nesse modo. A purga continua usando a posição já configurada para a calha.
 
+### Recuo antes de cortar
+
+`variable_recuo_antes_corte_mm` aceita de 0 a 5 mm e vem em 0. Na retirada com filamento, o recuo ocorre no ponto de aproximação, com a lâmina livre e a BMCU auxiliando pela rotina normal de recuo. O alimentador para antes de o batente acionar. Se o sensor liberar ou o recuo falhar, o corte não começa. O teste a seco não movimenta filamento.
+
+Se o filamento prende na entrada do dissipador, confira se a base é a versão `Cutter_Base with guide v1` indicada pelo autor do modelo. Antes de ativar, confira o alinhamento do guia com o hotend e verifique que o recuo não leva material amolecido até a lâmina. Compare o padrão de 0 mm com um recuo pequeno, por exemplo 2 mm se a geometria permitir, usando o mesmo material e temperatura. O recuo usa a velocidade de retirada normal (`recuo_f`); a purga e as posições da lâmina não mudam.
+
 ## Velocidade e segurança do caminho
 
 O perfil do cortador elimina a formação térmica da ponta e começa com recuo F600, avanço ao bico F240 e purga F180, em mm/min. A captura e as distâncias existentes são preservadas. A BMCU precisa acompanhar o recuo; a velocidade de recolhimento validada é 10 mm/s. Reduza as velocidades se houver patinação ou fluxo insuficiente, sem aumentar a tolerância de erro do encoder para esconder o problema.
