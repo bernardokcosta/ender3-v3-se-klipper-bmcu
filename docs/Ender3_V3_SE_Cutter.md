@@ -58,6 +58,10 @@ If the cutter is enabled but uncalibrated, missing its servo, outside travel lim
 
 If the servo jitters while holding the stop retracted, test with the carriage parked clear: command the retracted angle, wait for the horn to settle, then send `SET_SERVO SERVO=bmcu_cortador WIDTH=0`. Set `variable_soltar_servo_recolhido: 1` in `[gcode_macro _BMCU_ENDER_CORTADOR_AJUSTES]` only if the stop stays clear of the entire carriage path without servo torque, including under vibration. Add the line if missing and repeat the dry cycle. PWM stays on from deployment until the carriage backs away and the stop retracts; the 5 V supply stays on. With the option off, PWM stays on at the retracted angle.
 
+If there is free travel between deploying the stop and touching the lever, set `variable_x_contato` to the first contact position. `variable_curso_maximo_mm` then limits the distance from contact to full cut. With `None` or no setting, the limit still starts at the approach point. Both forward and return moves with the stop deployed use `variable_corte_f` throughout.
+
+Set `variable_manter_y_corte: 1` only if the entire cutting path is clear at every bed position used for tool changes. The cutting cycle ignores `variable_y_corte` in this mode. The purge still uses the configured chute position.
+
 ## Faster exchanges
 
 With a calibrated, enabled cutter, the integration replaces separation/cooling moves with the mechanical cutting cycle. It retains switch clearance, encoder feedback, compression limits and the confirmed 55 mm parking withdrawal; it does not allow a new filament into an occupied or uncertain route.
