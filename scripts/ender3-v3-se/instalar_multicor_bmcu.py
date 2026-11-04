@@ -315,7 +315,20 @@ def preparar_servo_cortador(caminho, pino):
     ).encode()
 
 
-def validar_pino_cortador(pino, configuracao):
+def validar_pino_cortador(pino, configuracao, modelo=None):
+    if modelo is None:
+        try:
+            modelo = Path('/proc/device-tree/model').read_text()
+        except OSError:
+            modelo = ''
+    if (
+        re.search(r'orange\s*pi\s*zero\s*3', modelo, re.I)
+        and pino.endswith('/gpio73')
+    ):
+        raise ValueError(
+            'PC9/pino 7 e usado pela interrupcao do PMIC na Zero 3. '
+            'Confira PC8/pino 15 e o GPIO correspondente antes de instalar.'
+        )
     if 'mcu host' not in configuracao:
         raise ValueError('Configure a MCU host antes de instalar o servo.')
     for secao, valores in configuracao.items():

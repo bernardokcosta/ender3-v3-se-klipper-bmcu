@@ -10,7 +10,7 @@ O servo posiciona o batente; quem pressiona a alavanca é o movimento X do cabe�
 
 | Fio do SG90 | Ligação |
 | --- | --- |
-| Sinal, normalmente laranja/amarelo | Pino físico 7, PC9, após conferir a disponibilidade |
+| Sinal, normalmente laranja/amarelo | Pino físico 15, PC8, após conferir a disponibilidade |
 | GND, normalmente marrom/preto | GND da fonte do servo e GND da Orange Pi, por exemplo pino físico 6 |
 | Alimentação, normalmente vermelho | Fonte regulada externa de 5 V, com capacidade para os picos do servo |
 
@@ -21,11 +21,15 @@ O sensor de entrada usa PC15/pino 16 na configuração validada. A UART5 da BMCU
 Confira o endereço e se o GPIO está livre:
 
 ```sh
-gpiodetect
-gpioinfo
+sudo gpiodetect
+sudo gpioinfo
 ```
 
-O candidato da instalação validada é `host:gpiochip1/gpio73`, mas o índice do gpiochip depende do kernel. Pino físico 7 não significa GPIO7. Consulte o pinout e a orientação de GPIO no guia em inglês.
+O endereço proposto para PC8 no layout observado é `host:gpiochip1/gpio72`, mas o índice do gpiochip depende do kernel. Pino físico 15 não significa GPIO15. Consulte o pinout e a orientação de GPIO no guia em inglês.
+
+O PC9 (pino físico 7) está ligado à interrupção do controlador de alimentação AXP313A no [device tree da Zero 3 no Linux](https://github.com/torvalds/linux/blob/v6.18/arch/arm64/boot/dts/allwinner/sun50i-h618-orangepi-zero3.dts). Não o use como saída do servo nem desative a interrupção do PMIC para liberá-lo. Ausência de consumidor no `gpioinfo` não comprova disponibilidade como saída: também existem reservas de interrupção e multiplexação. O instalador rejeita o offset 73 quando identifica a Orange Pi Zero 3. A indicação anterior do PC9 estava incorreta.
+
+Se a instalação falhou no PC9, mantenha a configuração restaurada. Desligue as alimentações antes de mover somente o sinal do servo para PC8, mantendo os 5 V e o GND comum. Após ligar e o Klipper ficar pronto, repita a instalação com o endereço conferido do PC8. Se a MCU Linux continuar em shutdown após a restauração, execute `FIRMWARE_RESTART` com a configuração restaurada antes de tentar novamente. Teste o servo somente após a instalação concluir.
 
 ## Atualização e calibração
 
@@ -35,7 +39,7 @@ Cancele a impressão, retire manualmente qualquer filamento preso e confirme os 
 cd "$HOME/klipper" &&
 git pull --ff-only origin master &&
 sudo python3 scripts/ender3-v3-se/install_multicolor.py \
-  --cutter-servo-pin host:gpiochip1/gpio73
+  --cutter-servo-pin host:gpiochip1/gpio72
 ```
 
 Substitua o endereço se o mapeamento for diferente. A alteração é no host; não exige novo `.bin` da impressora. O instalador faz backup, preserva calibrações e restaura os arquivos anteriores se a inicialização falhar. Sem o argumento do servo, instala o perfil opcional e o reset sem reservar GPIO.
