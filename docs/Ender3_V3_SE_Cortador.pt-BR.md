@@ -78,6 +78,8 @@ Com `variable_posicionamento_paralelo: 1`, o cabeçote pode ir à purga durante 
 
 Os tempos podem ser comparados em `unload_timing` e `ultimo_corte` no estado de `bmcu_integracao_ender`. Os testes de software verificam a sequência; os tempos reais e a confiabilidade precisam ser medidos na impressora.
 
+Se, após o corte, a extrusora já recuou 30 mm, o encoder acompanhou e o motor da BMCU está parado no alvo do buffer com o sensor ainda acionado, a integração tenta liberar o sensor uma vez só com a BMCU. O alvo do buffer baixa temporariamente em até 5 pontos percentuais. A tentativa respeita `tempo_sem_recuo` e é interrompida ao detectar 10 mm no encoder ou uma condição fora dos limites. O alvo original é restaurado ao terminar. `unload_timing.recovery_feeder_mm` registra o deslocamento observado. Se o sensor continuar acionado, a troca falha; o estacionamento e a carga do próximo canal exigem a liberação do sensor.
+
 ## Reset após retirada manual
 
 Depois de cancelar a impressão e deixar hotend e caminho compartilhado fisicamente livres:
