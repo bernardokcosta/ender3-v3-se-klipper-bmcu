@@ -90,6 +90,8 @@ Capture distance/speed and purge/parking distances remain those already configur
 
 Compare `unload_timing` and `ultimo_corte` in `bmcu_integracao_ender` status. The host tests validate sequencing and interlocks; the final timings require measurement on the printer.
 
+After a cut, if the extruder has retracted 30 mm, the feeder encoder has kept up, and the feeder motor is idle at the buffer target with the entry sensor still triggered, the integration makes one feeder-only recovery attempt. It temporarily lowers the buffer target by up to 5 percentage points, bounded by `tempo_sem_recuo`, 10 mm of observed encoder travel and the safety checks. It restores the original target afterward. `unload_timing.recovery_feeder_mm` records the observed travel. Parking and loading the next channel still require the sensor to clear.
+
 ## Reset after manual withdrawal
 
 After canceling the print and physically clearing the hotend/shared path:

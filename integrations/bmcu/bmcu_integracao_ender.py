@@ -1027,6 +1027,66 @@ class EnderIntegration:
             self.unload_encoder_gap(device, channel, tracking)
         return completed
 
+    def recuperar_sensor_apos_corte(
+        self, device, destination, channel, session, prazo, timing
+    ):
+        chave = protocol.CONFIG_BEFORE_PULLBACK_TARGET_PCT
+        alvo = device.config_get(chave)
+        alvo_temporario = max(20.0, alvo - 5.0)
+        self.verify_session(device, session, channel)
+        if not self.sensor(destination):
+            return True
+        if (
+            alvo_temporario >= alvo - 1.0
+            or abs(device.status['buffer_pct'][channel] - alvo) > 1.0
+            or device.status['motor_pwm'][channel] != 0
+            or self.reactor.monotonic() >= prazo
+        ):
+            return False
+        modo = protocol.MOTION_BEFORE_PULL_BACK
+        inicio = float(device.status['meters'][channel])
+        if (
+            not math.isfinite(inicio)
+            or device.status['motion'][channel] != modo
+        ):
+            raise RuntimeError('Estado invalido antes de recuperar o recuo.')
+        limite = min(
+            prazo, self.reactor.monotonic() + self.unload_progress_timeout
+        )
+        timing['recovery_feeder_mm'] = 0.0
+        try:
+            device.config_set(chave, alvo_temporario)
+            while True:
+                self.verify_session(device, session, channel)
+                recuo = (
+                    inicio - float(device.status['meters'][channel])
+                ) * 1000.0
+                timing['recovery_feeder_mm'] = recuo
+                if (
+                    not math.isfinite(recuo)
+                    or not -0.5 <= recuo <= 10.0
+                    or device.status['motion'][channel] != modo
+                    or not 15 < device.status['buffer_pct'][channel]
+                    <= self.unload_buffer_limit
+                ):
+                    raise RuntimeError(
+                        'Recuo de recuperacao saiu dos limites de seguranca.'
+                    )
+                if not self.sensor(destination):
+                    return True
+                agora = self.reactor.monotonic()
+                if agora >= limite or recuo >= 10.0:
+                    raise RuntimeError(
+                        'O sensor de entrada continuou acionado apos a '
+                        'tentativa de recuperacao do recuo.'
+                    )
+                self.reactor.pause(min(limite, agora + 0.100))
+        finally:
+            try:
+                device.stop_all()
+            finally:
+                device.config_set(chave, alvo)
+
     def posicionar_para_aquecimento(self, gcmd):
         if self.bmcu.active_operations or self.manual_operation is not None:
             raise gcmd.error('Aguarde o fim da operacao da BMCU.')
@@ -1453,6 +1513,8 @@ class EnderIntegration:
             release_started = self.reactor.monotonic()
             device.refresh()
             marker = float(device.status['meters'][channel])
+            if perfil:
+                tracking = {'start': marker, 'commanded': 0.0}
             search_start = progress_marker = marker
             progress_at = self.reactor.monotonic()
             device.set_motion(channel, protocol.MOTION_BEFORE_PULL_BACK)
@@ -1483,6 +1545,24 @@ class EnderIntegration:
                 total += abs(moved)
                 self.verify_session(device, session, channel, refresh=False)
                 current = float(device.status['meters'][channel])
+                if (
+                    perfil
+                    and total >= 30.0
+                    and (search_start - current) * 1000.0 >= total - 0.1
+                    and device.status['motor_pwm'][channel] == 0
+                    and self.sensor(destination)
+                ):
+                    alvo = getattr(device, 'motion_config', {}).get(
+                        protocol.CONFIG_BEFORE_PULLBACK_TARGET_PCT, 40.0
+                    )
+                    if (
+                        abs(device.status['buffer_pct'][channel] - alvo) <= 1.0
+                        and self.recuperar_sensor_apos_corte(
+                            device, destination, channel, session, deadline,
+                            timing,
+                        )
+                    ):
+                        break
                 if (progress_marker - current) * 1000.0 >= 1.0:
                     progress_marker = current
                     progress_at = self.reactor.monotonic()
@@ -1504,6 +1584,11 @@ class EnderIntegration:
                         channel, protocol.MOTION_BEFORE_PULL_BACK
                     )
                     marker = current
+            device.stop_all()
+            self.reactor.pause(self.reactor.monotonic() + 0.050)
+            self.verify_session(device, session, channel)
+            if self.sensor(destination):
+                raise RuntimeError('O sensor de entrada voltou a detectar.')
             gcmd.respond_info(
                 (
                     (
@@ -1514,9 +1599,12 @@ class EnderIntegration:
                 )
                 % (channel + 1, total, self.pullback)
             )
-            device.stop_all()
-            self.reactor.pause(self.reactor.monotonic() + 0.050)
-            device.refresh()
+            if 'recovery_feeder_mm' in timing:
+                gcmd.respond_info(
+                    'Canal %d: alimentador liberou o sensor no recuo de '
+                    'recuperacao (%.2f mm no encoder).'
+                    % (channel + 1, timing['recovery_feeder_mm'])
+                )
             timing['release_seconds'] = (
                 self.reactor.monotonic() - release_started
             )
@@ -1557,8 +1645,17 @@ class EnderIntegration:
                         )
                     )
                 if tracking is not None:
+                    comandado = (
+                        tracking['commanded']
+                        - timing.get('pre_cut_retract_mm', 0.0)
+                        if search_start is not None else tracking['commanded']
+                    )
                     evidence += (
-                        ' Total commanded net %.2f mm.' % tracking['commanded']
+                        ' Total commanded net %.2f mm.' % comandado
+                    )
+                if 'recovery_feeder_mm' in timing:
+                    evidence += ' Recuo de recuperacao: %.2f mm no encoder.' % (
+                        timing['recovery_feeder_mm'],
                     )
             raise gcmd.error(
                 'Unload interrupted: %s%s' % (error, evidence)

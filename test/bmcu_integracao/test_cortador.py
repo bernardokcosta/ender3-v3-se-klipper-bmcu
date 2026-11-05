@@ -87,6 +87,77 @@ class BancadaCortador(TipBench):
 
 
 class TestesCortador(unittest.TestCase):
+    def simular_fim_do_recuo_assistido(self, recuo_antes, sensor_travado):
+        b = BancadaCortador()
+        b.ajustes['recuo_antes_corte_mm'] = recuo_antes
+        b.switch_distance = recuo_antes + 34.0
+        b.stuck = sensor_travado
+        b.device.status['buffer_pct'][3] = 40
+        alvo = [40.0]
+        alteracoes = []
+        executar = b.gcode.run_script_from_command
+        pausar = b.reactor.pause
+
+        def configurar(chave, valor):
+            self.assertEqual(chave, protocol.CONFIG_BEFORE_PULLBACK_TARGET_PCT)
+            self.assertEqual(0, b.critical_depth)
+            alteracoes.append((valor, b.device.status['motion'][3], b.e))
+            alvo[0] = valor
+
+        def mover(comando):
+            metros, recuo = b.device.status['meters'][3], b.reverse
+            executar(comando)
+            if -b.e > recuo_antes + 30.0:
+                b.reverse = recuo
+                b.device.status['meters'][3] = metros
+
+        def aguardar(prazo):
+            pausar(prazo)
+            if (
+                alvo[0] == 35.0
+                and not sensor_travado
+                and b.obj.sensor(b.endpoint)
+            ):
+                b.reverse += 1.0
+                b.device.status['meters'][3] -= 0.001
+
+        b.device.config_get = lambda chave: alvo[0]
+        b.device.config_set = configurar
+        b.gcode.run_script_from_command = mover
+        b.reactor.pause = aguardar
+        return b, alteracoes
+
+    def test_corte_recupera_sensor_sem_recuar_mais_a_extrusora(self):
+        for recuo_antes in (0.0, 2.0):
+            with self.subTest(recuo_antes=recuo_antes):
+                b, alteracoes = self.simular_fim_do_recuo_assistido(
+                    recuo_antes, sensor_travado=False
+                )
+                b.unload()
+                extrusao = -(recuo_antes + 30.0)
+                self.assertEqual(
+                    [(35.0, protocol.MOTION_BEFORE_PULL_BACK, extrusao),
+                     (40.0, protocol.MOTION_IDLE, extrusao)],
+                    alteracoes,
+                )
+                self.assertAlmostEqual(
+                    4.0, b.obj.last_unload_timing['recovery_feeder_mm']
+                )
+                self.assertFalse(b.obj.sensor(b.endpoint))
+                self.assertEqual([(3, 55.0)], b.policies)
+
+    def test_recuperacao_com_sensor_travado_para_sem_estacionar(self):
+        b, alteracoes = self.simular_fim_do_recuo_assistido(
+            2.0, sensor_travado=True
+        )
+        with self.assertRaisesRegex(RuntimeError, 'continuou acionado'):
+            b.unload()
+        self.assertEqual([35.0, 40.0], [v for v, _, _ in alteracoes])
+        self.assertEqual(protocol.MOTION_IDLE, b.device.status['motion'][3])
+        self.assertTrue(b.obj.sensor(b.endpoint))
+        self.assertFalse(b.policies)
+        self.assertFalse(b.obj.temporary_pullbacks)
+
     def test_perfil_entregue_fica_desabilitado_e_sem_coordenadas_inventadas(
         self,
     ):
