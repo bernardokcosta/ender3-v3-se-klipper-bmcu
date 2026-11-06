@@ -262,6 +262,39 @@ def patch_pre_capture(text):
     return transform_method(text, 'BMCUManager', 'load_channel', change)
 
 
+def patch_pre_unload(text):
+    def change(fragment):
+        previous = (
+            '            device.set_motion(channel, '
+            'protocol.MOTION_BEFORE_PULL_BACK)\n'
+            "            context['before_pullback_started'] = True\n"
+            '            self.reactor.pause(self.reactor.monotonic() + 0.2)'
+        )
+        updated = (
+            "            ender_release = (endpoint.driver == "
+            "'generic_single_extruder' and\n"
+            "                str(endpoint.get('before_pullback_macro', ''))."
+            "strip().upper() == 'BMCU_LIBERAR_ENDER')\n"
+            '            if not ender_release:\n'
+            + textwrap.indent(previous, '    ')
+            + '\n            else:\n'
+            '                endpoint._ender_unload_context = (\n'
+            '                    device.name, int(channel), '
+            "device.status['session_id'])\n"
+            '                device.stop_all()'
+        )
+        if updated in fragment:
+            return fragment
+        if fragment.count(previous) != 1:
+            raise RuntimeError(
+                'The native unload phase changed; review manager.py '
+                'before installation.'
+            )
+        return fragment.replace(previous, updated, 1)
+
+    return transform_method(text, 'BMCUManager', '_begin_unload_locked', change)
+
+
 def patch_transport(text):
     original_import = 'from bmcu_core import protocol, transport'
     guarded_import = (
@@ -461,7 +494,9 @@ def prepare(
             sensor.read_text() if sensor.is_file() else MEASUREMENT
         ).encode(),
         contracts.resolve(): patch_contract(contracts.read_text()).encode(),
-        manager.resolve(): patch_pre_capture(manager.read_text()).encode(),
+        manager.resolve(): patch_pre_unload(
+            patch_pre_capture(manager.read_text())
+        ).encode(),
         module.resolve(): MODULE.encode(),
         (extras / 'bmcu_cortador_ender.py').resolve(): CORTADOR,
         (extras / 'bmcu_core/ender_transport.py').resolve(): TRANSPORT_GUARD,

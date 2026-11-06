@@ -120,6 +120,9 @@ são preservados.
 
 ## Testes e limitações
 
+Para preparar o ambiente Linux/WSL e repetir a validação sem acessar a impressora,
+consulte o [guia de desenvolvimento local](docs/Desenvolvimento_Local.pt-BR.md).
+
 ```sh
 python3 -m unittest discover -s test/bmcu_integracao -p 'test_*.py'
 python3 -m unittest discover -s test/e3v3se_display -p 'test_*.py'

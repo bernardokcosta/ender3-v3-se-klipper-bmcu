@@ -66,9 +66,11 @@ Use `variable_manter_y_corte: 1` somente quando houver folga para o corte com a 
 
 ### Recuo antes de cortar
 
-`variable_recuo_antes_corte_mm` aceita de 0 a 5 mm e vem em 0. Na retirada com filamento, o recuo ocorre no ponto de aproximação, com a lâmina livre e a BMCU auxiliando pela rotina normal de recuo. O alimentador para antes de o batente acionar. Se o sensor liberar ou o recuo falhar, o corte não começa. O teste a seco não movimenta filamento.
+`variable_recuo_antes_corte_mm` vem em 0. Aceita até 5 mm, mas não pode exceder `folga_recuo_mm`; o perfil é rejeitado antes de mover o cabeçote se exceder essa folga. Na aproximação, a extrusora recua em passos monitorados com a lâmina livre e a BMCU parada. O buffer absorve a diferença. Se o sensor liberar, o buffer atingir o limite, a sessão mudar ou qualquer motor da BMCU continuar ativo, a operação para antes da lâmina. O teste a seco não movimenta filamento.
 
-Se o filamento prende na entrada do dissipador, confira se a base é a versão `Cutter_Base with guide v1` indicada pelo autor do modelo. Antes de ativar, confira o alinhamento do guia com o hotend e verifique que o recuo não leva material amolecido até a lâmina. Compare o padrão de 0 mm com um recuo pequeno, por exemplo 2 mm se a geometria permitir, usando o mesmo material e temperatura. O recuo usa a velocidade de retirada normal (`recuo_f`); a purga e as posições da lâmina não mudam.
+Se o filamento prende na entrada do dissipador, confira se a base é a versão `Cutter_Base with guide v1` indicada pelo autor do modelo. Antes de ativar, confira o alinhamento do guia com o hotend e verifique que o recuo total não leva material amolecido até a lâmina. O recuo ainda ativo do fatiador soma-se ao da integração; não há compensação automática. O recuo pré-corte usa `recuo_f`; distâncias de purga e posições da lâmina não mudam.
+
+O instalador também impede que o núcleo BMCU ligue a assistência por 200 ms antes do callback `BMCU_LIBERAR_ENDER`. O canal e a sessão são passados explicitamente porque parar os motores pode limpar `now_channel`. A assistência começa somente na retirada após o curso da lâmina e o recolhimento do batente. Reinstale pelo instalador completo, não apenas copiando os dois módulos opcionais: o ajuste do gerenciador nativo faz parte da mesma atualização. Outros callbacks preservam o comportamento nativo.
 
 ## Velocidade e segurança do caminho
 
@@ -76,7 +78,9 @@ O perfil do cortador elimina a formação térmica da ponta e começa com recuo 
 
 Com `variable_posicionamento_paralelo: 1`, o cabeçote pode ir à purga durante a busca nativa até o switch somente com todos os caminhos livres e sensor de entrada desacionado. A extrusora espera o posicionamento terminar antes da captura. Não se antecipa um segundo filamento em um caminho ocupado ou incerto.
 
-Os tempos podem ser comparados em `unload_timing` e `ultimo_corte` no estado de `bmcu_integracao_ender`. Os testes de software verificam a sequência; os tempos reais e a confiabilidade precisam ser medidos na impressora.
+Os tempos podem ser comparados em `unload_timing` e `ultimo_corte` no estado de `bmcu_integracao_ender`. Uma interrupção registra `ultimo_corte.etapa`, inclusive se ocorrer na validação ou no recolhimento inicial; não reutiliza o sucesso de um corte anterior. `sincronismo_pre_corte` e `sincronismo_pos_corte` registram recuo comandado, encoder, buffer, PWM, modo e tempo antes/depois dos passos. O tempo dos movimentos inclui a espera por conclusão, não apenas o giro do motor. Os testes verificam a sequência; confiabilidade e tempos reais exigem medição na impressora.
+
+Purga e limpeza usam coordenadas físicas da máquina, como o cortador, independentemente de `G92`, offsets do G-code ou `M220`. Os limites da calha, do limpador e a altura disponível para o alívio Z são conferidos antes de posicionar; sem a folga Z completa, não inicia o deslocamento XY. Distâncias, velocidades, coordenadas e tempos de configuração devem ser finitos; `nan` e infinito são rejeitados. Ao final do estacionamento, a confirmação exige encoder, sensor livre, mesma sessão e motores parados; uma resposta antiga de fim de movimento não basta.
 
 O sensor de entrada acionado mantém o recuo da extrusora com assistência da BMCU, sujeito aos limites de tempo, buffer e progresso do encoder. O motor da BMCU estar momentaneamente parado no alvo do buffer não comprova que a ponta saiu das engrenagens. A tentativa introduzida no PR #22, que substituía o recuo da extrusora aos 30 mm por uma redução do alvo do buffer, foi removida após falhar no teste físico. O recuo pré-corte de 2 mm continua disponível. Essa reversão corrige a interrupção antecipada, mas não explica por si só os timeouts anteriores aos 62 mm.
 

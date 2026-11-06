@@ -68,9 +68,11 @@ Set `variable_manter_y_corte: 1` only if the entire cutting path is clear at eve
 
 ### Retracting before cutting
 
-`variable_recuo_antes_corte_mm` accepts 0 to 5 mm and defaults to 0. With filament loaded, retraction runs at the approach point before the stop deploys. The feeder assists through the usual withdrawal checks and stops before cutting. A cleared entry sensor or failed withdrawal blocks the cut. The dry test does not move filament.
+`variable_recuo_antes_corte_mm` defaults to 0 and accepts up to 5 mm, but cannot exceed `folga_recuo_mm`. An excessive value rejects the profile before carriage motion. At the approach point, the extruder retracts in monitored increments with the blade clear and the feeder stopped, using the buffer to absorb the difference. A cleared sensor, buffer at its limit, changed session or active feeder motor blocks the blade. The dry test does not move filament.
 
-If filament catches at the heatsink entrance, check for the model author’s `Cutter_Base with guide v1`. Before enabling, verify that the filament guide lines up with the hotend and the retract cannot bring softened material to the blade. Compare the 0 mm baseline with a small retract, such as 2 mm if the geometry permits, using the same material and temperature. The retract uses the regular unload speed (`recuo_f`); purge and cut coordinates stay the same.
+If filament catches at the heatsink entrance, check for the model author’s `Cutter_Base with guide v1`. Verify alignment and ensure the total retract cannot bring softened material to the blade. Any slicer retract still in effect adds to the integration's retract; there is no automatic compensation. The pre-cut retract uses `recuo_f`; purge distances and blade positions stay the same.
+
+The installer also prevents the native manager from starting withdrawal assistance for 200 ms before `BMCU_LIBERAR_ENDER`. It passes the channel and session explicitly because stopping the motors can clear `now_channel`. Assistance starts only during withdrawal after the blade stroke and stop retraction. Run the complete installer rather than copying only the optional modules: the native-manager adjustment belongs to the same update. Other callbacks retain native behavior.
 
 ## Faster exchanges
 
@@ -88,7 +90,9 @@ Capture distance/speed and purge/parking distances remain those already configur
 
 `variable_posicionamento_paralelo: 1` allows carriage positioning during the native arrival search **only after all routes are confirmed empty and the entry sensor is clear**. The native BMCU remains responsible for stopping at the entry sensor. Extruder capture waits for queued carriage moves to finish. There is no background loading of a second filament into the shared path, and no native route/tail checks are bypassed.
 
-Compare `unload_timing` and `ultimo_corte` in `bmcu_integracao_ender` status. The host tests validate sequencing and interlocks; the final timings require measurement on the printer.
+Compare `unload_timing` and `ultimo_corte` in `bmcu_integracao_ender` status. Failed cuts record `ultimo_corte.etapa`, including validation and initial retraction failures, instead of retaining an earlier success. `sincronismo_pre_corte` and `sincronismo_pos_corte` record commanded retract, encoder, buffer, PWM, motion mode and elapsed time around increments. Movement time includes completion waits, not just motor travel. Tests validate sequencing and interlocks; physical timings and reliability require printer measurements.
+
+Purge positioning and wiping use physical machine coordinates, like cutting, independently of `G92`, G-code offsets and `M220`. Chute and wiper limits and room for the complete Z lift are checked before positioning; insufficient Z clearance blocks XY travel. Configuration distances, rates, coordinates and timeouts must be finite: NaN and infinity are rejected. Final parking verification requires encoder travel, a clear sensor, the same session and idle motors; an earlier completion reply alone is insufficient.
 
 ## Reset after manual withdrawal
 

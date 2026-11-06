@@ -14,6 +14,9 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 BASE = Path(__file__).parent / 'fixtures'
+NATIVE_MANAGER = (BASE / 'manager_original.txt').read_text() + '\n' + (
+    BASE / 'unload_original.txt'
+).read_text()
 
 
 def import_module(name, path):
@@ -86,6 +89,8 @@ class TestBench:
         self.timeout = 0.0
         self.critical_depth = 0
         self.commands = []
+        self.head_moves = []
+        self.head_waits = 0
         self.policies = []
         self.present = True
         self.reverse = 0
@@ -94,6 +99,7 @@ class TestBench:
         self.restart = False
         self.position = [100.0, 110.0, 5.0, 0.0]
         self.e = 0.0
+        self.encoder_channel = 3
         self.actuators = []
         self.handlers = {}
         self.reactor = types.SimpleNamespace(
@@ -136,8 +142,11 @@ class TestBench:
             get_position=lambda: self.position,
             get_status=lambda t: {
                 'homed_axes': 'xyz',
+                'axis_minimum': [-8, 0, 0],
                 'axis_maximum': [230, 230, 250],
             },
+            manual_move=self.move_head,
+            wait_moves=self.wait_head,
         )
         self.extruder = types.SimpleNamespace(
             max_e_dist=5.0, get_status=lambda t: {'can_extrude': True}
@@ -198,6 +207,15 @@ class TestBench:
     def pause(self, timeout):
         self.timeout = timeout
 
+    def move_head(self, coordinates, speed):
+        self.head_moves.append((len(self.commands), list(coordinates), speed))
+        for axis, value in enumerate(coordinates):
+            if value is not None:
+                self.position[axis] = value
+
+    def wait_head(self):
+        self.head_waits += 1
+
     @contextmanager
     def critical(self, name):
         self.critical_depth += 1
@@ -227,6 +245,11 @@ class TestBench:
         self.actuators.append(mode)
         self.device.status['motion'][channel] = mode
         self.device.status['now_channel'] = channel
+        self.encoder_channel = channel
+        if mode == protocol.MOTION_BEFORE_PULL_BACK:
+            self.bmcu.active_operations[self.device.name] = {
+                'phase': 'CUT_OR_FORM'
+            }
 
     def policy(self, device, channel_retract_override=None):
         self.uart()
@@ -244,6 +267,7 @@ class TestBench:
     ):
         assert sensor_gerenciado is True
         assert destination.sensor_status('entry_sensor')['enabled'] is False
+        self.encoder_channel = channel
         self.e += mm
         device.status['meters'][channel] += mm / 1000
 
@@ -265,7 +289,7 @@ class TestBench:
                 self.e += mm
                 self.timeout += abs(mm) / params['F'] * 60
                 self.reverse = max(0, -self.e)
-                self.device.status['meters'][3] += mm / 1000
+                self.device.status['meters'][self.encoder_channel] += mm / 1000
 
     def register(self, name, handler):
         previous = self.handlers.pop(name, None)
@@ -563,7 +587,7 @@ class IntegrationTests(unittest.TestCase):
                 (BASE / 'endpoints_original.txt').read_text()
             )
             (extras / 'bmcu_core/manager.py').write_text(
-                (BASE / 'manager_original.txt').read_text()
+                NATIVE_MANAGER
             )
             daemon = config / 'bmcu/runtime/scripts/bmcu_transportd.py'
             daemon.parent.mkdir(parents=True)

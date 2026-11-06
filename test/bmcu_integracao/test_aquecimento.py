@@ -50,7 +50,7 @@ class AquecimentoTests(unittest.TestCase):
                     elif linha.startswith('M109 S230'):
                         self.assertTrue(posicionou)
                         self.assertEqual([-5, 125], bancada.position[:2])
-                        self.assertTrue(bancada.commands[-1].endswith('M400'))
+                        self.assertGreater(bancada.head_waits, 0)
                         self.assertEqual(0, bancada.e)
                         bancada.temperature = 230
                         aqueceu = True

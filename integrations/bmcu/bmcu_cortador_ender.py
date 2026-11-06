@@ -87,6 +87,10 @@ class CortadorEnder:
                 )
         if not 0 <= perfil['recuo_antes_corte_mm'] <= 5.0:
             raise RuntimeError('Configure o recuo antes do corte de 0 a 5 mm.')
+        if perfil['recuo_antes_corte_mm'] > self.integracao.unload_slack:
+            raise RuntimeError(
+                'O recuo antes do corte excede a folga configurada do buffer.'
+            )
         sentido = math.copysign(
             1, perfil['x_corte'] - perfil['x_aproximacao']
         )
@@ -223,11 +227,15 @@ class CortadorEnder:
             cabecote.wait_moves()
 
     def cortar(self, perfil, verificar, retornar=True, antes_do_corte=None):
-        cabecote, origem, altura = self.validar_movimento(perfil)
         inicio = self.integracao.reactor.monotonic()
-        self.recolher(perfil)
+        etapa = 'validacao'
         try:
+            cabecote, origem, altura = self.validar_movimento(perfil)
+            etapa = 'recolhimento_inicial'
             verificar()
+            self.recolher(perfil)
+            verificar()
+            etapa = 'aproximacao'
             self.mover(cabecote, [None, None, altura], 300)
             y = None if perfil['manter_y_corte'] else perfil['y_corte']
             self.mover(
@@ -237,16 +245,20 @@ class CortadorEnder:
             )
             verificar()
             if antes_do_corte is not None:
+                etapa = 'recuo_pre_corte'
                 antes_do_corte()
                 verificar()
+            etapa = 'acionamento_servo'
             self.incerto = True
             self.recolhido = False
             self.posicionar_servo(perfil, perfil['angulo_acionado'])
             verificar()
+            etapa = 'curso_da_lamina'
             self.mover(
                 cabecote, [perfil['x_corte'], None, None], perfil['corte_f']
             )
             verificar()
+            etapa = 'retorno_e_recolhimento'
             self.mover(
                 cabecote,
                 [perfil['x_aproximacao'], None, None],
@@ -255,6 +267,7 @@ class CortadorEnder:
             self.posicionar_recolhido(perfil)
             verificar()
             if retornar:
+                etapa = 'retorno_a_origem'
                 self.mover(
                     cabecote,
                     [origem[0], origem[1], None],
@@ -267,6 +280,8 @@ class CortadorEnder:
         except Exception:
             self.ultimo_corte = {
                 'resultado': 'interrompido',
+                'etapa': etapa,
+                'segundos': self.integracao.reactor.monotonic() - inicio,
                 'posicao_incerta': self.incerto,
             }
             raise

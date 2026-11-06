@@ -95,8 +95,8 @@ def prepare(home, snapshot):
     changes[contracts.resolve()] = installer.patch_contract(
         contracts.read_text()
     ).encode()
-    changes[manager.resolve()] = installer.patch_pre_capture(
-        manager.read_text()
+    changes[manager.resolve()] = installer.patch_pre_unload(
+        installer.patch_pre_capture(manager.read_text())
     ).encode()
     if any(not p.resolve().is_relative_to(home.resolve()) for p in changes):
         raise RuntimeError(

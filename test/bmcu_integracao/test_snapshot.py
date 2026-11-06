@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from test_integracao import NATIVE_MANAGER
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / 'scripts/ender3-v3-se'
 sys.path.insert(0, str(SCRIPTS))
@@ -157,6 +159,7 @@ class SnapshotTest(unittest.TestCase):
         fixtures = Path(__file__).parent / 'fixtures'
         for name in ('endpoints', 'manager'):
             (extras / (name + '.py')).write_text(
+                NATIVE_MANAGER if name == 'manager' else
                 (fixtures / (name + '_original.txt')).read_text()
             )
         return configurations

@@ -18,36 +18,43 @@ class EnderIntegration:
         self.reactor = self.printer.get_reactor()
         self.device = config.get('dispositivo', 'bmcu0')
         self.destination = config.get('destino', 'extruder')
-        self.capture = config.getfloat('captura_mm', 20.0, above=0.0)
-        self.capture_speed = config.getfloat('captura_f', 180.0, above=0.0)
-        self.advance = config.getfloat('avanco_bico_mm', 80.0, above=0.0)
-        self.purge_distance = config.getfloat('purga_mm', 35.0, above=0.0)
-        self.advance_speed = config.getfloat('avanco_f', 120.0, above=0.0)
-        self.pullback_speed = config.getfloat('recuo_f', 300.0, above=0.0)
-        self.unload_buffer_limit = config.getfloat(
+
+        def finite_float(name, default, **limits):
+            value = config.getfloat(name, default, **limits)
+            if not math.isfinite(value):
+                raise config.error('%s must be a finite number.' % name)
+            return value
+
+        self.capture = finite_float('captura_mm', 20.0, above=0.0)
+        self.capture_speed = finite_float('captura_f', 180.0, above=0.0)
+        self.advance = finite_float('avanco_bico_mm', 80.0, above=0.0)
+        self.purge_distance = finite_float('purga_mm', 35.0, above=0.0)
+        self.advance_speed = finite_float('avanco_f', 120.0, above=0.0)
+        self.pullback_speed = finite_float('recuo_f', 300.0, above=0.0)
+        self.unload_buffer_limit = finite_float(
             'limite_buffer_recuo', 70.0, minval=0.0, maxval=100.0
         )
-        self.unload_buffer_resume = config.getfloat(
+        self.unload_buffer_resume = finite_float(
             'retomar_buffer_recuo', 65.0, minval=0.0, maxval=100.0
         )
         if self.unload_buffer_resume >= self.unload_buffer_limit:
             raise config.error('Unload buffer resume must be below its limit.')
-        self.unload_buffer_timeout = config.getfloat(
+        self.unload_buffer_timeout = finite_float(
             'tempo_buffer_recuo', 3.0, above=0.0
         )
-        self.unload_progress_timeout = config.getfloat(
+        self.unload_progress_timeout = finite_float(
             'tempo_sem_recuo', 3.0, above=0.0
         )
-        self.unload_step = config.getfloat('passo_recuo_mm', 1.0, above=0.0)
-        self.unload_slack = config.getfloat('folga_recuo_mm', 2.0, above=0.0)
-        self.pullback = config.getfloat(
+        self.unload_step = finite_float('passo_recuo_mm', 1.0, above=0.0)
+        self.unload_slack = finite_float('folga_recuo_mm', 2.0, above=0.0)
+        self.pullback = finite_float(
             'recuo_apos_switch_mm', 55.0, above=0.0
         )
-        self.timeout = config.getfloat('tempo_switch', 60.0, above=0.0)
-        self.purge_x = config.getfloat('x_purga', -6.0)
-        self.wipe_x = config.getfloat('x_limpeza', -4.0)
-        self.purge_y = config.getfloat('y_purga', 123.0)
-        self.z_lift = config.getfloat('alivio_z', 2.0, above=0.0)
+        self.timeout = finite_float('tempo_switch', 60.0, above=0.0)
+        self.purge_x = finite_float('x_purga', -6.0)
+        self.wipe_x = finite_float('x_limpeza', -4.0)
+        self.purge_y = finite_float('y_purga', 123.0)
+        self.z_lift = finite_float('alivio_z', 2.0, above=0.0)
         self.wipe_passes = config.getint('limpezas', 3, minval=1)
         self.temporary_pullbacks = {}
         self.manual_operation = None
@@ -197,6 +204,10 @@ class EnderIntegration:
             ) * 1000.0
             if device.status['session_id'] != record['session']:
                 raise RuntimeError('The BMCU restarted during pullback.')
+            if any(device.status['motion']) or any(device.status['motor_pwm']):
+                raise RuntimeError(
+                    'The BMCU did not remain idle after parking.'
+                )
             if not math.isfinite(measured) or measured + 0.1 < self.pullback:
                 raise RuntimeError(
                     (
@@ -442,14 +453,10 @@ class EnderIntegration:
             .get('can_extrude')
         ):
             return resultado
-        altura = cabecote.get_position()[2] + self.z_lift
-        minimo, maximo = estado['axis_minimum'], estado['axis_maximum']
-        alvo = [self.purge_x, self.purge_y, altura]
-        if not all(minimo[i] <= alvo[i] <= maximo[i] for i in range(3)):
-            raise RuntimeError('Posicionamento de carga fora dos limites.')
+        alvo = self.posicao_purga(cabecote, estado)
         self.cortador.recolher(perfil)
         with self.bmcu.printer_critical_section('posicionamento_carga'):
-            cabecote.manual_move([None, None, altura], 5)
+            cabecote.manual_move([None, None, alvo[2]], 5)
             cabecote.manual_move([self.purge_x, None, None], 20)
             cabecote.manual_move([None, self.purge_y, None], 20)
             cabecote.get_last_move_time()
@@ -868,12 +875,25 @@ class EnderIntegration:
                 )
             channel = int(context[1])
         else:
-            channel = int(device.status.get('now_channel', -1))
+            context = getattr(destination, '_ender_unload_context', None)
+            if context is None:
+                channel = int(device.status.get('now_channel', -1))
+            else:
+                destination._ender_unload_context = None
+                if (
+                    context[0] != device.name
+                    or context[2] != device.status['session_id']
+                ):
+                    raise RuntimeError('The native unload context changed.')
+                channel = int(context[1])
         if not 0 <= channel < 4:
             raise RuntimeError('The BMCU did not identify the active channel.')
         expected = (
-            protocol.MOTION_IDLE if load else protocol.MOTION_BEFORE_PULL_BACK
+            protocol.MOTION_IDLE if load or context is not None
+            else protocol.MOTION_BEFORE_PULL_BACK
         )
+        if not load and operation.get('phase') != 'CUT_OR_FORM':
+            raise RuntimeError('The native unloading phase does not match.')
         if int(device.status['motion'][channel]) != expected:
             raise RuntimeError(
                 ('The native feeding phase does not match this command.')
@@ -963,6 +983,78 @@ class EnderIntegration:
             self.reactor.pause(self.reactor.monotonic() + 0.100)
             refresh = True
 
+    def registrar_sincronismo(self, device, channel, tracking, etapa):
+        diagnostico = tracking.get('diagnostico')
+        if diagnostico is None:
+            return
+        status = device.status
+        recuo_encoder = (
+            tracking['start'] - float(status['meters'][channel])
+        ) * 1000.0
+        diagnostico[etapa] = {
+            'tempo_s': round(
+                self.reactor.monotonic() - diagnostico['inicio_s'], 3
+            ),
+            'recuo_extrusora_comandado_mm': round(-tracking['commanded'], 3),
+            'recuo_encoder_mm': round(recuo_encoder, 3),
+            'buffer_pct': status['buffer_pct'][channel],
+            'pwm': status['motor_pwm'][channel],
+            'movimento': status['motion'][channel],
+        }
+
+    def verificar_alimentador_parado(
+        self, device, destination, channel, session
+    ):
+        self.verify_session(device, session, channel)
+        if any(device.status['motion']) or any(device.status['motor_pwm']):
+            raise RuntimeError('A BMCU nao esta parada para o corte.')
+        if not self.sensor(destination):
+            raise RuntimeError('O filamento saiu do sensor antes de cortar.')
+
+    def recuar_com_alimentador_parado(
+        self, device, destination, channel, session, tracking, distancia
+    ):
+        if not 0 <= distancia <= self.unload_slack:
+            raise RuntimeError(
+                'O recuo antes do corte excede a folga configurada do buffer.'
+            )
+        extruder = self.printer.lookup_object('extruder')
+        limite = min(
+            self.unload_step, self.unload_slack / 2, extruder.max_e_dist
+        )
+        if limite <= 0:
+            raise RuntimeError('The extrusion limit is set to zero.')
+
+        def verificar():
+            self.verificar_alimentador_parado(
+                device, destination, channel, session
+            )
+            if device.status['buffer_pct'][channel] >= self.unload_buffer_limit:
+                raise RuntimeError('O buffer comprimiu no recuo pre-corte.')
+
+        restante = distancia
+        verificar()
+        while restante > 0.000001:
+            passo = min(restante, limite)
+            self.registrar_sincronismo(device, channel, tracking, 'antes_passo')
+            diagnostico = tracking['diagnostico']
+            diagnostico.setdefault(
+                'antes_primeiro_passo', diagnostico['antes_passo']
+            )
+            inicio = self.reactor.monotonic()
+            self.move_filament(-passo, self.pullback_speed, chunk=passo)
+            diagnostico['tempo_movimentos_s'] += (
+                self.reactor.monotonic() - inicio
+            )
+            tracking['commanded'] -= passo
+            restante -= passo
+            try:
+                verificar()
+            finally:
+                self.registrar_sincronismo(
+                    device, channel, tracking, 'depois_passo'
+                )
+
     def move_unload_filament(
         self,
         device,
@@ -1013,11 +1105,29 @@ class EnderIntegration:
                     'Feeder assistance changed during withdrawal.'
                 )
             signed = -step if mm < 0 else step
+            diagnostico = tracking.get('diagnostico')
+            if diagnostico is not None:
+                self.registrar_sincronismo(
+                    device, channel, tracking, 'antes_passo'
+                )
+                diagnostico.setdefault(
+                    'antes_primeiro_passo', diagnostico['antes_passo']
+                )
+                inicio_movimento = self.reactor.monotonic()
             self.move_filament(signed, speed, chunk=limit)
             tracking['commanded'] += signed
+            if diagnostico is not None:
+                diagnostico['tempo_movimentos_s'] += (
+                    self.reactor.monotonic() - inicio_movimento
+                )
             completed += signed
             remaining -= step
-            self.wait_unload_buffer(device, destination, channel, session)
+            try:
+                self.wait_unload_buffer(device, destination, channel, session)
+            finally:
+                self.registrar_sincronismo(
+                    device, channel, tracking, 'depois_passo'
+                )
             if not self.sensor(destination):
                 if allow_clear:
                     return completed
@@ -1034,6 +1144,18 @@ class EnderIntegration:
         if perfil and not self.cortador.recolhido:
             raise gcmd.error('Recolha e confira o batente antes de posicionar.')
         self.position_head(exigir_aquecimento=False)
+
+    def posicao_purga(self, cabecote, estado):
+        if not all(axis in estado['homed_axes'] for axis in 'xyz'):
+            raise RuntimeError('Run G28 before loading or unloading filament.')
+        minimo, maximo = estado['axis_minimum'], estado['axis_maximum']
+        z = cabecote.get_position()[2] + self.z_lift
+        alvo = [self.purge_x, self.purge_y, z]
+        if not all(minimo[i] <= alvo[i] <= maximo[i] for i in range(3)) or not (
+            minimo[0] <= self.wipe_x <= maximo[0]
+        ):
+            raise RuntimeError('Posicao de purga/limpeza fora dos limites.')
+        return alvo
 
     def position_head(self, exigir_aquecimento=True):
         toolhead = self.printer.lookup_object('toolhead')
@@ -1064,26 +1186,16 @@ class EnderIntegration:
                 return
             finally:
                 self.posicionamento_pendente = None
-        status = toolhead.get_status(self.reactor.monotonic())
-        if not all(axis in status['homed_axes'] for axis in 'xyz'):
-            raise RuntimeError(
-                ('Run G28 before loading or unloading filament.')
-            )
-        z = min(
-            toolhead.get_position()[2] + self.z_lift, status['axis_maximum'][2]
-        )
-        self.execute(
-            (
-                'M400\nG90\nG1 Z%.6f F300\nG1 X%.6f F1200\n'
-                'G1 Y%.6f F1200\n'
-                'M400'
-            )
-            % (z, self.purge_x, self.purge_y)
-        )
         extruder = self.printer.lookup_object('extruder')
         status = extruder.get_status(self.reactor.monotonic())
         if exigir_aquecimento and not status.get('can_extrude'):
             raise RuntimeError('Heat the nozzle before changing filament.')
+        toolhead.wait_moves()
+        estado = toolhead.get_status(self.reactor.monotonic())
+        alvo = self.posicao_purga(toolhead, estado)
+        self.cortador.mover(toolhead, [None, None, alvo[2]], 300)
+        self.cortador.mover(toolhead, [self.purge_x, None, None], 1200)
+        self.cortador.mover(toolhead, [None, self.purge_y, None], 1200)
 
     def move_filament(self, mm, speed, chunk=10.0):
         extruder = self.printer.lookup_object('extruder')
@@ -1301,12 +1413,11 @@ class EnderIntegration:
             self.move_filament(step, velocidade)
             remaining -= step
         self.execute('G4 P1000')
+        cabecote = self.printer.lookup_object('toolhead')
         for _ in range(self.wipe_passes):
-            self.execute(
-                'G1 X%.6f F600\nG1 X%.6f F600\nM400'
-                % (self.wipe_x, self.purge_x)
-            )
-        self.execute('G1 X%.6f F600\nM400' % self.wipe_x)
+            self.cortador.mover(cabecote, [self.wipe_x, None, None], 600)
+            self.cortador.mover(cabecote, [self.purge_x, None, None], 600)
+        self.cortador.mover(cabecote, [self.wipe_x, None, None], 600)
 
     def load(self, gcmd):
         device = None
@@ -1420,22 +1531,27 @@ class EnderIntegration:
             if perfil:
 
                 def verificar_corte():
-                    self.verify_session(device, session, channel)
-                    if not self.sensor(destination):
-                        raise RuntimeError(
-                            'O filamento saiu do sensor durante o corte.'
-                        )
+                    self.verificar_alimentador_parado(
+                        device, destination, channel, session
+                    )
 
                 recuo_antes = perfil['recuo_antes_corte_mm']
 
                 def recuar_antes_do_corte():
-                    movido = self.move_unload_filament(
-                        device, destination, channel, session, tracking,
-                        -recuo_antes, self.pullback_speed,
+                    diagnostico = {
+                        'inicio_s': self.reactor.monotonic(),
+                        'tempo_movimentos_s': 0.0,
+                    }
+                    tracking['diagnostico'] = diagnostico
+                    timing['sincronismo_pre_corte'] = diagnostico
+                    self.registrar_sincronismo(
+                        device, channel, tracking, 'antes_assistencia'
                     )
-                    device.stop_all()
-                    self.reactor.pause(self.reactor.monotonic() + 0.050)
-                    timing['pre_cut_retract_mm'] = abs(movido)
+                    self.recuar_com_alimentador_parado(
+                        device, destination, channel, session, tracking,
+                        recuo_antes,
+                    )
+                    timing['pre_cut_retract_mm'] = recuo_antes
 
                 self.cortador.cortar(
                     perfil, verificar_corte, retornar=False,
@@ -1455,6 +1571,13 @@ class EnderIntegration:
             marker = float(device.status['meters'][channel])
             if perfil:
                 tracking = {'start': marker, 'commanded': 0.0}
+                tracking['diagnostico'] = timing['sincronismo_pos_corte'] = {
+                    'inicio_s': release_started,
+                    'tempo_movimentos_s': 0.0,
+                }
+                self.registrar_sincronismo(
+                    device, channel, tracking, 'antes_assistencia'
+                )
             search_start = progress_marker = marker
             progress_at = self.reactor.monotonic()
             device.set_motion(channel, protocol.MOTION_BEFORE_PULL_BACK)

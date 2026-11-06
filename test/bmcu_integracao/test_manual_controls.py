@@ -38,6 +38,7 @@ class ManualBench(TestBench):
         }
         self.toolhead.get_status = lambda t: {
             'homed_axes': self.homed_axes,
+            'axis_minimum': [-8, 0, 0],
             'axis_maximum': [230, 230, 250],
         }
 
@@ -99,7 +100,8 @@ class ManualControlsTests(unittest.TestCase):
         unload = b.commands.index('BMCU_UNLOAD DEVICE=bmcu0 CHANNEL=3')
         load = b.commands.index('BMCU_LOAD DEVICE=bmcu0 CHANNEL=0')
         self.assertLess(unload, load)
-        self.assertTrue(any('X-6.000000' in c for c in b.commands[:unload]))
+        self.assertTrue(any(at <= unload and coords[0] == -6.0
+                            for at, coords, _ in b.head_moves))
         self.assertIn('RESTORE_GCODE_STATE NAME=BMCU_ENDER_MANUAL', b.commands)
 
     def test_unload_waits_for_230_and_homes_before_purging(self):
@@ -108,10 +110,11 @@ class ManualControlsTests(unittest.TestCase):
         b.obj.manual_filament(Gcmd(ACTION='UNLOAD'))
         self.assertGreaterEqual(b.timeout, 1.0)
         home = b.commands.index('G28')
-        purge = next(i for i, c in enumerate(b.commands) if 'X-6.000000' in c)
+        purge = next(at for at, coords, _ in b.head_moves
+                     if coords[0] == -6.0)
         unload = b.commands.index('BMCU_UNLOAD DEVICE=bmcu0 CHANNEL=1')
         self.assertLess(home, purge)
-        self.assertLess(purge, unload)
+        self.assertLessEqual(purge, unload)
 
     def test_hot_nozzle_does_not_wait_for_heating(self):
         b = ManualBench(hot=True)

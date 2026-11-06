@@ -1,0 +1,21 @@
+    # SPDX-License-Identifier: GPL-3.0-or-later
+    # BMCU-Klipper v1.0.6 callback excerpt; unrelated helpers omitted.
+    def _begin_unload_locked(self, device, endpoint, channel,
+                             reconcile_requires_park=False,
+                             retain_selected_endpoint=False,
+                             temperature_profile=None,
+                             reason='unload'):
+        context = {'before_pullback_started': False}
+        material = 'PETG'
+        try:
+            device.refresh()
+            context['pullback_start_m'] = float(
+                device.status['meters'][channel])
+            device.set_motion(channel, protocol.MOTION_BEFORE_PULL_BACK)
+            context['before_pullback_started'] = True
+            self.reactor.pause(self.reactor.monotonic() + 0.2)
+            if endpoint.driver == 'generic_single_extruder':
+                endpoint.prepare_toolhead_for_pullback(material, reason=reason)
+        except Exception:
+            raise
+        return context
