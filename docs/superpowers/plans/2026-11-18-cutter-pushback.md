@@ -1,5 +1,7 @@
 # Cutter Pushback Implementation Plan
 
+**English** | [Português brasileiro](../../pt-BR/superpowers/plans/2026-11-18-cutter-pushback.md)
+
 > Execute locally, task by task, using test-driven development. No printer
 > installation, motion, commits or firmware changes are authorized by this plan.
 
